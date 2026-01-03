@@ -624,6 +624,7 @@ textarea:focus {
   min-height: 140px;
   text-align: center;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  position: relative;
 }
 
 .vocab-card:hover {
@@ -636,11 +637,39 @@ textarea:focus {
   align-items: stretch;
 }
 
-.vocab-card-delete {
-  padding: 6px 10px;
-  font-size: 12px;
+.vocab-card-actions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 1;
+}
+
+.vocab-card-icon {
+  width: 22px;
+  height: 22px;
   border-radius: 999px;
-  justify-self: center;
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+  padding: 0;
+  font-size: 12px;
+  display: grid;
+  place-items: center;
+}
+
+.vocab-card-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.vocab-card-icon:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.vocab-card-icon.active {
+  background: rgba(255, 255, 255, 0.22);
 }
 
 .vocab-card-word {
@@ -1135,43 +1164,6 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-
-.scenario-action {
-  position: absolute;
-  top: 12px;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--ink);
-  display: grid;
-  place-items: center;
-  font-size: 14px;
-  padding: 0;
-}
-
-.scenario-action svg {
-  width: 14px;
-  height: 14px;
-}
-
-.scenario-action:hover {
-  background: rgba(255, 255, 255, 0.14);
-}
-
-.scenario-archive {
-  left: 12px;
-}
-
-.scenario-favorite {
-  right: 12px;
-}
-
-.scenario-favorite.active {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.35);
 }
 
 .scenario-card-title {

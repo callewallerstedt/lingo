@@ -35,11 +35,13 @@ type VocabEntry = {
   translation: string;
   count: number;
   lastClicked: number;
+  starred?: boolean;
 };
 
 type StudyEntry = {
   word: string;
   translation: string;
+  starred?: boolean;
 };
 
 type StudyPack = {
@@ -65,7 +67,7 @@ export default function Home() {
   const [progressMap, setProgressMap] = useState<ProgressMap>({});
   const [loadingProgress, setLoadingProgress] = useState<boolean>(false);
 
-  const [view, setView] = useState<"dashboard" | "chat" | "common">("dashboard");
+  const [view, setView] = useState<"dashboard" | "chat" | "common" | "scenario-vocab" | "scenario-detail">("dashboard");
   const [activeScenario, setActiveScenario] = useState<ScenarioDefinition | null>(null);
   const [taskText, setTaskText] = useState<string>("");
   const [taskLoading, setTaskLoading] = useState<boolean>(false);
@@ -98,10 +100,10 @@ export default function Home() {
   const [scenarioVocabFront, setScenarioVocabFront] = useState<"word" | "translation">("word");
   const [scenarioVocabFlipped, setScenarioVocabFlipped] = useState<Record<number, boolean>>({});
   const [scenarioVocabLoading, setScenarioVocabLoading] = useState<boolean>(false);
-  const [showScenarioVocabModal, setShowScenarioVocabModal] = useState<boolean>(false);
-  const [favoriteScenarios, setFavoriteScenarios] = useState<string[]>([]);
-  const [archivedScenarios, setArchivedScenarios] = useState<string[]>([]);
-  const [showArchived, setShowArchived] = useState<boolean>(false);
+  const [activeScenarioVocab, setActiveScenarioVocab] = useState<ScenarioDefinition | null>(null);
+  const [showStarredOnly, setShowStarredOnly] = useState<boolean>(false);
+  const [showStudyStarredOnly, setShowStudyStarredOnly] = useState<boolean>(false);
+  const [showScenarioStarredOnly, setShowScenarioStarredOnly] = useState<boolean>(false);
 
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -120,8 +122,6 @@ export default function Home() {
     const savedFront = localStorage.getItem("lingoarc_vocab_front");
     const savedStudy = localStorage.getItem("lingoarc_study_pack");
     const savedScenarioVocab = localStorage.getItem("lingoarc_scenario_vocab");
-    const savedFavorites = localStorage.getItem("lingoarc_favorites");
-    const savedArchived = localStorage.getItem("lingoarc_archived");
     const savedUsername = localStorage.getItem("lingoarc_username");
     if (savedVocab) {
       try {
@@ -151,26 +151,6 @@ export default function Home() {
         }
       } catch {
         // Ignore malformed scenario vocab cache
-      }
-    }
-    if (savedFavorites) {
-      try {
-        const parsed = JSON.parse(savedFavorites) as string[];
-        if (Array.isArray(parsed)) {
-          setFavoriteScenarios(parsed);
-        }
-      } catch {
-        // Ignore malformed favorites cache
-      }
-    }
-    if (savedArchived) {
-      try {
-        const parsed = JSON.parse(savedArchived) as string[];
-        if (Array.isArray(parsed)) {
-          setArchivedScenarios(parsed);
-        }
-      } catch {
-        // Ignore malformed archived cache
       }
     }
     if (savedLanguage) {
@@ -210,13 +190,6 @@ export default function Home() {
     localStorage.setItem("lingoarc_scenario_vocab", JSON.stringify(scenarioVocabMap));
   }, [scenarioVocabMap]);
 
-  useEffect(() => {
-    localStorage.setItem("lingoarc_favorites", JSON.stringify(favoriteScenarios));
-  }, [favoriteScenarios]);
-
-  useEffect(() => {
-    localStorage.setItem("lingoarc_archived", JSON.stringify(archivedScenarios));
-  }, [archivedScenarios]);
 
   useEffect(() => {
     localStorage.setItem("lingoarc_vocab_front", vocabFront);
@@ -932,13 +905,14 @@ export default function Home() {
                 translation,
                 count: entry.count + 1,
                 lastClicked: Date.now(),
+                starred: entry.starred,
               }
             : entry
         );
       }
       return [
         ...prev,
-        { key, word, translation, count: 1, lastClicked: Date.now() },
+        { key, word, translation, count: 1, lastClicked: Date.now(), starred: false },
       ];
     });
   }
@@ -957,16 +931,34 @@ export default function Home() {
     });
   }
 
+  function toggleVocabStar(key: string) {
+    setVocabEntries((prev) =>
+      prev.map((entry) =>
+        entry.key === key ? { ...entry, starred: !entry.starred } : entry
+      )
+    );
+  }
+
   function clearStudy() {
     setStudyPack(null);
     setStudyFlipped({});
   }
 
+  function toggleStudyStar(index: number) {
+    setStudyPack((prev) => {
+      if (!prev) return prev;
+      const next = prev.entries.map((entry, i) =>
+        i === index ? { ...entry, starred: !entry.starred } : entry
+      );
+      return { ...prev, entries: next };
+    });
+  }
+
   function clearScenarioVocab() {
-    if (!activeScenarioRef.current) return;
+    if (!activeScenarioVocab) return;
     setScenarioVocabMap((prev) => {
       const next = { ...prev };
-      delete next[activeScenarioRef.current?.id || ""];
+      delete next[activeScenarioVocab.id];
       return next;
     });
     setScenarioVocabFlipped({});
@@ -1011,18 +1003,6 @@ export default function Home() {
     return "";
   }
 
-  function toggleFavorite(scenarioId: string) {
-    setFavoriteScenarios((prev) =>
-      prev.includes(scenarioId) ? prev.filter((id) => id !== scenarioId) : [...prev, scenarioId]
-    );
-  }
-
-  function archiveScenario(scenarioId: string) {
-    setArchivedScenarios((prev) =>
-      prev.includes(scenarioId) ? prev.filter((id) => id !== scenarioId) : [...prev, scenarioId]
-    );
-  }
-
   function deleteStudyEntry(index: number) {
     setStudyPack((prev) => {
       if (!prev) return prev;
@@ -1040,9 +1020,20 @@ export default function Home() {
     });
   }
 
+  function toggleScenarioStar(index: number, scenarioId: string) {
+    setScenarioVocabMap((prev) => {
+      const current = prev[scenarioId];
+      if (!current) return prev;
+      const nextEntries = current.entries.map((entry, i) =>
+        i === index ? { ...entry, starred: !entry.starred } : entry
+      );
+      return { ...prev, [scenarioId]: { ...current, entries: nextEntries } };
+    });
+  }
+
   function deleteScenarioEntry(index: number) {
-    if (!activeScenarioRef.current) return;
-    const scenarioId = activeScenarioRef.current.id;
+    if (!activeScenarioVocab) return;
+    const scenarioId = activeScenarioVocab.id;
     setScenarioVocabMap((prev) => {
       const current = prev[scenarioId];
       if (!current) return prev;
@@ -1075,7 +1066,8 @@ export default function Home() {
       if (!Array.isArray(data.items) || data.items.length === 0) return;
 
       setStudyPack((prev) => {
-        const merged = [...(prev?.entries ?? []), ...data.items];
+        const incoming = data.items.map((item) => ({ ...item, starred: item.starred ?? false }));
+        const merged = [...(prev?.entries ?? []), ...incoming];
         return { language, entries: merged };
       });
     } finally {
@@ -1083,11 +1075,11 @@ export default function Home() {
     }
   }
 
-  async function generateScenarioWords(count: number) {
-    if (!language || !activeScenarioRef.current || scenarioVocabLoading) return;
+  async function generateScenarioWords(count: number, scenario: ScenarioDefinition) {
+    if (!language || scenarioVocabLoading) return;
     setScenarioVocabLoading(true);
     try {
-      const scenarioId = activeScenarioRef.current.id;
+      const scenarioId = scenario.id;
       const existing = scenarioVocabMap[scenarioId]?.entries.map((entry) => entry.word) ?? [];
       const res = await fetch("/api/vocab-list", {
         method: "POST",
@@ -1096,10 +1088,10 @@ export default function Home() {
           language,
           count,
           existing,
-          scenarioTitle: activeScenarioRef.current.title,
-          scenarioDetail: activeScenarioRef.current.subtitle,
-          roleGuide: activeScenarioRef.current.roleGuide,
-          userRole: activeScenarioRef.current.userRole,
+          scenarioTitle: scenario.title,
+          scenarioDetail: scenario.subtitle,
+          roleGuide: scenario.roleGuide,
+          userRole: scenario.userRole,
         }),
       });
       if (!res.ok) return;
@@ -1108,7 +1100,8 @@ export default function Home() {
 
       setScenarioVocabMap((prev) => {
         const current = prev[scenarioId];
-        const merged = [...(current?.entries ?? []), ...data.items];
+        const incoming = data.items.map((item) => ({ ...item, starred: item.starred ?? false }));
+        const merged = [...(current?.entries ?? []), ...incoming];
         return { ...prev, [scenarioId]: { language, entries: merged } };
       });
     } finally {
@@ -1120,79 +1113,27 @@ export default function Home() {
     return vocabEntries.slice().sort((a, b) => b.lastClicked - a.lastClicked);
   }, [vocabEntries]);
 
-  const filteredScenarios = SCENARIOS.filter((scenario) =>
-    showArchived ? true : !archivedScenarios.includes(scenario.id)
-  );
-  const sortedScenarios = filteredScenarios.slice().sort((a, b) => {
-    const aFav = favoriteScenarios.includes(a.id) ? 1 : 0;
-    const bFav = favoriteScenarios.includes(b.id) ? 1 : 0;
-    return bFav - aFav;
-  });
+  const filteredVocab = useMemo(() => {
+    if (!showStarredOnly) return sortedVocab;
+    return sortedVocab.filter((entry) => entry.starred);
+  }, [sortedVocab, showStarredOnly]);
 
   const dashboardCards = (
     <div className="scenario-grid">
-      {sortedScenarios.map((scenario) => {
+      {SCENARIOS.map((scenario) => {
         const completedCount = progressMap[scenario.id] || 0;
         const progressRatio = Math.min(completedCount / TASKS_PER_SCENARIO, 1);
         const percent = Math.round(progressRatio * 100);
         const isDisabled = !language;
         return (
-          <div
+          <button
             key={scenario.id}
-            className={`scenario-card ${completedCount >= TASKS_PER_SCENARIO ? "done" : ""} ${
-              isDisabled ? "disabled" : ""
-            }`}
-            role="button"
-            tabIndex={0}
-            onClick={() => {
-              if (isDisabled) return;
-              startScenarioChat(scenario);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                if (isDisabled) return;
-                startScenarioChat(scenario);
-              }
-            }}
-            aria-disabled={isDisabled ? "true" : "false"}
+            type="button"
+            className={`scenario-card ${completedCount >= TASKS_PER_SCENARIO ? "done" : ""}`}
+            onClick={() => startScenarioChat(scenario)}
+            disabled={isDisabled}
             title={isDisabled ? "Set a language first" : ""}
           >
-            <button
-              type="button"
-              className="scenario-action scenario-archive"
-              onClick={(event) => {
-                event.stopPropagation();
-                archiveScenario(scenario.id);
-              }}
-              aria-label="Archive scenario"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M6 6l12 12M18 6L6 18"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className={`scenario-action scenario-favorite ${favoriteScenarios.includes(scenario.id) ? "active" : ""}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                toggleFavorite(scenario.id);
-              }}
-              aria-label="Favorite scenario"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
-                  fill="currentColor"
-                />
-              </svg>
-            </button>
             <div className="scenario-card-header">
               <div className="scenario-card-title">{scenario.title}</div>
               <div
@@ -1207,7 +1148,7 @@ export default function Home() {
               </div>
             </div>
             <div className="scenario-card-body">{scenario.subtitle}</div>
-          </div>
+          </button>
         );
       })}
     </div>
@@ -1278,6 +1219,13 @@ export default function Home() {
         >
           Start: {studyFront === "word" ? "Target" : "English"}
         </button>
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => setShowStudyStarredOnly((prev) => !prev)}
+        >
+          {showStudyStarredOnly ? "Show all" : "Starred only"}
+        </button>
       </div>
       {!language ? (
         <p className="dashboard-alert">Set a language above to generate vocabulary.</p>
@@ -1285,11 +1233,17 @@ export default function Home() {
         <div className="home-vocab-empty">Generate a list to start studying.</div>
       ) : studyMode === "list" ? (
         <div className="vocab-list">
-          {studyPack.entries.map((entry, index) => (
+          {(showStudyStarredOnly
+            ? studyPack.entries.map((entry, index) => ({ entry, index })).filter((item) => item.entry.starred)
+            : studyPack.entries.map((entry, index) => ({ entry, index }))
+          ).map(({ entry, index }) => (
             <div key={`${entry.word}-${index}`} className="vocab-row">
               <div className="vocab-word">{entry.word}</div>
               <div className="vocab-translation">{entry.translation}</div>
               <div className="vocab-actions">
+                <button type="button" className="ghost" onClick={() => toggleStudyStar(index)}>
+                  {entry.starred ? "Unstar" : "Star"}
+                </button>
                 <button type="button" className="ghost" onClick={() => deleteStudyEntry(index)}>
                   Delete
                 </button>
@@ -1299,7 +1253,10 @@ export default function Home() {
         </div>
       ) : (
         <div className="vocab-cards">
-          {studyPack.entries.map((entry, index) => {
+          {(showStudyStarredOnly
+            ? studyPack.entries.map((entry, index) => ({ entry, index })).filter((item) => item.entry.starred)
+            : studyPack.entries.map((entry, index) => ({ entry, index }))
+          ).map(({ entry, index }) => {
             const flipped = Boolean(studyFlipped[index]);
             const frontText = studyFront === "word" ? entry.word : entry.translation;
             const backText = studyFront === "word" ? entry.translation : entry.word;
@@ -1311,6 +1268,43 @@ export default function Home() {
                   onClick={() => toggleStudyCard(index)}
                   aria-pressed={flipped ? "true" : "false"}
                 >
+                    <div className="vocab-card-actions">
+                      <button
+                        type="button"
+                        className={`vocab-card-icon ${entry.starred ? "active" : ""}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleStudyStar(index);
+                        }}
+                        aria-label="Star"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
+                            fill="currentColor"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className="vocab-card-icon"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          deleteStudyEntry(index);
+                        }}
+                        aria-label="Delete"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M6 6l12 12M18 6L6 18"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      </button>
+                    </div>
                   <div className="vocab-card-face">
                     <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
                       {flipped ? backText : frontText}
@@ -1320,9 +1314,6 @@ export default function Home() {
                     </div>
                   </div>
                 </button>
-                <button type="button" className="ghost vocab-card-delete" onClick={() => deleteStudyEntry(index)}>
-                  Delete
-                </button>
               </div>
             );
           })}
@@ -1330,6 +1321,225 @@ export default function Home() {
       )}
     </section>
   );
+
+  const scenarioVocabView = (
+    <section className="chat-shell">
+      <div className="chat-header">
+        <button type="button" className="ghost" onClick={() => setView("dashboard")}>
+          Back
+        </button>
+        <div className="chat-title">
+          <div className="chat-title-main">Scenario vocabulary</div>
+          <div className="chat-title-sub">Pick a scenario to study its words.</div>
+        </div>
+      </div>
+      <div className="scenario-grid">
+        {SCENARIOS.map((scenario) => {
+          const count = scenarioVocabMap[scenario.id]?.entries.length || 0;
+          return (
+            <button
+              key={scenario.id}
+              type="button"
+              className="scenario-card"
+              onClick={() => {
+                setActiveScenarioVocab(scenario);
+                setScenarioVocabFlipped({});
+                setView("scenario-detail");
+              }}
+            >
+              <div className="scenario-card-header">
+                <div className="scenario-card-title">{scenario.title}</div>
+                <div className="scenario-ring">
+                  <div className="scenario-ring-inner">{count}</div>
+                </div>
+              </div>
+              <div className="scenario-card-body">{scenario.subtitle}</div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+
+  const scenarioDetailView = activeScenarioVocab ? (
+    <section className="chat-shell">
+      <div className="chat-header">
+        <button type="button" className="ghost" onClick={() => setView("scenario-vocab")}>
+          Back
+        </button>
+        <div className="chat-title">
+          <div className="chat-title-main">{activeScenarioVocab.title} vocabulary</div>
+          <div className="chat-title-sub">{activeScenarioVocab.subtitle}</div>
+        </div>
+      </div>
+      <div className="task-banner">
+        <div className="task-label">Scenario words</div>
+        <div className="task-text">
+          {scenarioVocabMap[activeScenarioVocab.id]?.entries.length
+            ? `${scenarioVocabMap[activeScenarioVocab.id].entries.length} words ready`
+            : "Generate a list to begin."}
+        </div>
+        <div className="home-vocab-actions">
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => generateScenarioWords(20, activeScenarioVocab)}
+            disabled={!language || scenarioVocabLoading}
+          >
+            {scenarioVocabLoading ? "Generating" : "Generate 20"}
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => generateScenarioWords(10, activeScenarioVocab)}
+            disabled={!language || scenarioVocabLoading}
+          >
+            {scenarioVocabLoading ? "Generating" : "Generate 10 more"}
+          </button>
+          <button type="button" className="ghost" onClick={clearScenarioVocab}>
+            Clear
+          </button>
+        </div>
+      </div>
+      <div className="home-vocab-controls">
+        <div className="segmented">
+          <button
+            type="button"
+            className={`segmented-btn ${scenarioVocabMode === "list" ? "active" : ""}`}
+            onClick={() => setScenarioVocabMode("list")}
+          >
+            List
+          </button>
+          <button
+            type="button"
+            className={`segmented-btn ${scenarioVocabMode === "cards" ? "active" : ""}`}
+            onClick={() => setScenarioVocabMode("cards")}
+          >
+            Flashcards
+          </button>
+        </div>
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => {
+            setScenarioVocabFront((prev) => (prev === "word" ? "translation" : "word"));
+            setScenarioVocabFlipped({});
+          }}
+        >
+          Start: {scenarioVocabFront === "word" ? "Target" : "English"}
+        </button>
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => setShowScenarioStarredOnly((prev) => !prev)}
+        >
+          {showScenarioStarredOnly ? "Show all" : "Starred only"}
+        </button>
+      </div>
+      {!language ? (
+        <p className="dashboard-alert">Set a language above to generate vocabulary.</p>
+      ) : scenarioVocabMap[activeScenarioVocab.id]?.entries?.length ? (
+        scenarioVocabMode === "list" ? (
+          <div className="vocab-list">
+            {(showScenarioStarredOnly
+              ? scenarioVocabMap[activeScenarioVocab.id].entries
+                  .map((entry, index) => ({ entry, index }))
+                  .filter((item) => item.entry.starred)
+              : scenarioVocabMap[activeScenarioVocab.id].entries.map((entry, index) => ({ entry, index }))
+            ).map(({ entry, index }) => (
+              <div key={`${entry.word}-${index}`} className="vocab-row">
+                <div className="vocab-word">{entry.word}</div>
+                <div className="vocab-translation">{entry.translation}</div>
+                <div className="vocab-actions">
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => toggleScenarioStar(index, activeScenarioVocab.id)}
+                  >
+                    {entry.starred ? "Unstar" : "Star"}
+                  </button>
+                  <button type="button" className="ghost" onClick={() => deleteScenarioEntry(index)}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="vocab-cards">
+            {(showScenarioStarredOnly
+              ? scenarioVocabMap[activeScenarioVocab.id].entries
+                  .map((entry, index) => ({ entry, index }))
+                  .filter((item) => item.entry.starred)
+              : scenarioVocabMap[activeScenarioVocab.id].entries.map((entry, index) => ({ entry, index }))
+            ).map(({ entry, index }) => {
+              const flipped = Boolean(scenarioVocabFlipped[index]);
+              const frontText = scenarioVocabFront === "word" ? entry.word : entry.translation;
+              const backText = scenarioVocabFront === "word" ? entry.translation : entry.word;
+              return (
+                <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
+                  <button
+                    type="button"
+                    className={`vocab-card ${flipped ? "flipped" : ""}`}
+                    onClick={() => toggleScenarioCard(index)}
+                    aria-pressed={flipped ? "true" : "false"}
+                  >
+                    <div className="vocab-card-actions">
+                      <button
+                        type="button"
+                        className={`vocab-card-icon ${entry.starred ? "active" : ""}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleScenarioStar(index, activeScenarioVocab.id);
+                        }}
+                        aria-label="Star"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
+                            fill="currentColor"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className="vocab-card-icon"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          deleteScenarioEntry(index);
+                        }}
+                        aria-label="Delete"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M6 6l12 12M18 6L6 18"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+                    <div className="vocab-card-face">
+                      <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
+                        {flipped ? backText : frontText}
+                      </div>
+                      <div className="vocab-card-hint">
+                        {flipped ? "Tap to hide" : "Tap to flip"}
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )
+      ) : (
+        <div className="home-vocab-empty">Generate words for this scenario.</div>
+      )}
+    </section>
+  ) : null;
 
   const chatView = (
     <section className="chat-shell">
@@ -1344,9 +1554,6 @@ export default function Home() {
         <div className="chat-actions">
           <button type="button" className="ghost" onClick={() => setShowVocabModal(true)}>
             Vocabulary
-          </button>
-          <button type="button" className="ghost" onClick={() => setShowScenarioVocabModal(true)}>
-            Scenario vocab
           </button>
           <button
             type="button"
@@ -1515,6 +1722,16 @@ export default function Home() {
                   </div>
                   <div className="scenario-card-body">Top 30 everyday words. Generate more anytime.</div>
                 </button>
+                <button
+                  type="button"
+                  className="scenario-card"
+                  onClick={() => setView("scenario-vocab")}
+                >
+                  <div className="scenario-card-header">
+                    <div className="scenario-card-title">Scenario vocabulary</div>
+                  </div>
+                  <div className="scenario-card-body">Browse and generate words per scenario.</div>
+                </button>
               </div>
             </section>
             <div className="dashboard-header">
@@ -1526,9 +1743,6 @@ export default function Home() {
                 ) : null}
               </div>
               <div className="dashboard-meta">
-                <button type="button" className="ghost" onClick={() => setShowArchived((prev) => !prev)}>
-                  {showArchived ? "Hide archived" : "Show archived"}
-                </button>
                 {loadingProgress ? "Syncing progress" : `Total points: ${totalPoints()}`}
               </div>
             </div>
@@ -1536,6 +1750,10 @@ export default function Home() {
           </section>
         ) : view === "common" ? (
           commonWordsView
+        ) : view === "scenario-vocab" ? (
+          scenarioVocabView
+        ) : view === "scenario-detail" ? (
+          scenarioDetailView
         ) : (
           chatView
         )}
@@ -1615,21 +1833,31 @@ export default function Home() {
                 >
                   Start: {vocabFront === "word" ? "Target" : "English"}
                 </button>
+                <button
+                  type="button"
+                  className="ghost vocab-tab"
+                  onClick={() => setShowStarredOnly((prev) => !prev)}
+                >
+                  {showStarredOnly ? "Show all" : "Starred only"}
+                </button>
                 <button type="button" className="ghost vocab-clear" onClick={clearVocab}>
                   Clear
                 </button>
               </div>
             </div>
             <div className="vocab-modal-body">
-              {vocabEntries.length === 0 ? (
+              {filteredVocab.length === 0 ? (
                 <div className="vocab-empty">Click words in the chat to save them here.</div>
               ) : vocabMode === "list" ? (
                 <div className="vocab-list">
-                  {sortedVocab.map((entry) => (
+                  {filteredVocab.map((entry) => (
                       <div key={entry.key} className="vocab-row">
                         <div className="vocab-word">{entry.word}</div>
                         <div className="vocab-translation">{entry.translation}</div>
                         <div className="vocab-actions">
+                          <button type="button" className="ghost" onClick={() => toggleVocabStar(entry.key)}>
+                            {entry.starred ? "Unstar" : "Star"}
+                          </button>
                           <span className="vocab-count">x{entry.count}</span>
                           <button type="button" className="ghost" onClick={() => deleteVocabEntry(entry.key)}>
                             Delete
@@ -1640,7 +1868,7 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="vocab-cards">
-                  {sortedVocab.map((entry) => {
+                  {filteredVocab.map((entry) => {
                       const flipped = Boolean(flippedCards[entry.key]);
                       const frontText = vocabFront === "word" ? entry.word : entry.translation;
                       const backText = vocabFront === "word" ? entry.translation : entry.word;
@@ -1652,6 +1880,43 @@ export default function Home() {
                             onClick={() => toggleCard(entry.key)}
                             aria-pressed={flipped ? "true" : "false"}
                           >
+                            <div className="vocab-card-actions">
+                              <button
+                                type="button"
+                                className={`vocab-card-icon ${entry.starred ? "active" : ""}`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  toggleVocabStar(entry.key);
+                                }}
+                                aria-label="Star"
+                              >
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <path
+                                    d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
+                                    fill="currentColor"
+                                  />
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
+                                className="vocab-card-icon"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  deleteVocabEntry(entry.key);
+                                }}
+                                aria-label="Delete"
+                              >
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <path
+                                    d="M6 6l12 12M18 6L6 18"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                  />
+                                </svg>
+                              </button>
+                            </div>
                             <div className="vocab-card-face">
                               <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
                                 {flipped ? backText : frontText}
@@ -1660,13 +1925,6 @@ export default function Home() {
                                 {flipped ? "Tap to hide" : "Tap to flip"}
                               </div>
                             </div>
-                          </button>
-                          <button
-                            type="button"
-                            className="ghost vocab-card-delete"
-                            onClick={() => deleteVocabEntry(entry.key)}
-                          >
-                            Delete
                           </button>
                         </div>
                       );
@@ -1678,115 +1936,6 @@ export default function Home() {
         </div>
       ) : null}
 
-      {showScenarioVocabModal && activeScenario ? (
-        <div className="vocab-modal-overlay" onClick={() => setShowScenarioVocabModal(false)}>
-          <div className="vocab-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="vocab-modal-header">
-              <div className="vocab-title">{activeScenario.title} Vocabulary</div>
-              <div className="vocab-controls">
-                <button
-                  type="button"
-                  className={`ghost vocab-tab ${scenarioVocabMode === "list" ? "active" : ""}`}
-                  onClick={() => setScenarioVocabMode("list")}
-                >
-                  List
-                </button>
-                <button
-                  type="button"
-                  className={`ghost vocab-tab ${scenarioVocabMode === "cards" ? "active" : ""}`}
-                  onClick={() => setScenarioVocabMode("cards")}
-                >
-                  Flashcards
-                </button>
-                <button
-                  type="button"
-                  className="ghost vocab-tab"
-                  onClick={() => {
-                    setScenarioVocabFront((prev) => (prev === "word" ? "translation" : "word"));
-                    setScenarioVocabFlipped({});
-                  }}
-                >
-                  Start: {scenarioVocabFront === "word" ? "Target" : "English"}
-                </button>
-                <button
-                  type="button"
-                  className="ghost vocab-tab"
-                  onClick={() => generateScenarioWords(20)}
-                  disabled={scenarioVocabLoading}
-                >
-                  {scenarioVocabLoading ? "Generating" : "Generate 20"}
-                </button>
-                <button
-                  type="button"
-                  className="ghost vocab-tab"
-                  onClick={() => generateScenarioWords(10)}
-                  disabled={scenarioVocabLoading}
-                >
-                  {scenarioVocabLoading ? "Generating" : "Generate 10 more"}
-                </button>
-                <button type="button" className="ghost vocab-clear" onClick={clearScenarioVocab}>
-                  Clear
-                </button>
-              </div>
-            </div>
-            <div className="vocab-modal-body">
-              {scenarioVocabMap[activeScenario.id]?.entries?.length ? (
-                scenarioVocabMode === "list" ? (
-                  <div className="vocab-list">
-                    {scenarioVocabMap[activeScenario.id].entries.map((entry, index) => (
-                      <div key={`${entry.word}-${index}`} className="vocab-row">
-                        <div className="vocab-word">{entry.word}</div>
-                        <div className="vocab-translation">{entry.translation}</div>
-                        <div className="vocab-actions">
-                          <button type="button" className="ghost" onClick={() => deleteScenarioEntry(index)}>
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="vocab-cards">
-                    {scenarioVocabMap[activeScenario.id].entries.map((entry, index) => {
-                      const flipped = Boolean(scenarioVocabFlipped[index]);
-                      const frontText = scenarioVocabFront === "word" ? entry.word : entry.translation;
-                      const backText = scenarioVocabFront === "word" ? entry.translation : entry.word;
-                      return (
-                        <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
-                          <button
-                            type="button"
-                            className={`vocab-card ${flipped ? "flipped" : ""}`}
-                            onClick={() => toggleScenarioCard(index)}
-                            aria-pressed={flipped ? "true" : "false"}
-                          >
-                            <div className="vocab-card-face">
-                              <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
-                                {flipped ? backText : frontText}
-                              </div>
-                              <div className="vocab-card-hint">
-                                {flipped ? "Tap to hide" : "Tap to flip"}
-                              </div>
-                            </div>
-                          </button>
-                          <button
-                            type="button"
-                            className="ghost vocab-card-delete"
-                            onClick={() => deleteScenarioEntry(index)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )
-              ) : (
-                <div className="vocab-empty">Generate words for this scenario.</div>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
