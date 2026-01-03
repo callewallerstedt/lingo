@@ -61,6 +61,7 @@ export default function Home() {
   const [username, setUsername] = useState<string>("admin");
   const [password, setPassword] = useState<string>("admin");
   const [authError, setAuthError] = useState<string | null>(null);
+  const [profileName, setProfileName] = useState<string>("");
   const [languageOptions, setLanguageOptions] = useState<string[]>([]);
   const [showLanguageModal, setShowLanguageModal] = useState<boolean>(false);
   const [newLanguageInput, setNewLanguageInput] = useState<string>("");
@@ -280,6 +281,7 @@ export default function Home() {
       setLanguageOptions([]);
       setStudyPack(null);
       setScenarioVocabMap({});
+      setProfileName("");
       return;
     }
     setAuthError(null);
@@ -396,7 +398,14 @@ export default function Home() {
       .single();
 
     if (error) {
+      await ensureProfile(authUser.email || "user@lingoarc.local", username || "user");
+      setLanguageOptions([]);
+      setShowLanguageModal(true);
       return;
+    }
+
+    if (typeof data?.username === "string") {
+      setProfileName(data.username);
     }
 
     const storedLanguages = Array.isArray(data?.languages) ? data?.languages : [];
@@ -440,6 +449,7 @@ export default function Home() {
       languages: nextLanguages,
       active_language: nextValue,
     });
+    setProfileName(username || authUser.email?.split("@")[0] || "user");
   }
 
   async function loadUserVocab(activeLanguage: string) {
@@ -1999,6 +2009,9 @@ export default function Home() {
               </div>
             </div>
             <div className="points-pill">Points {totalPoints()}</div>
+            <div className="logged-in">
+              Logged in as {profileName || username || authUser.email}
+            </div>
             <button type="button" className="ghost" onClick={handleLogout}>
               Sign out
             </button>
