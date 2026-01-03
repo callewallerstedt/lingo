@@ -586,6 +586,7 @@ textarea:focus {
   border-radius: 12px;
   border: 1px solid var(--glass-border);
   background: rgba(255, 255, 255, 0.03);
+  text-align: left;
 }
 
 .vocab-word {
@@ -625,6 +626,7 @@ textarea:focus {
   text-align: center;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
   position: relative;
+  cursor: pointer;
 }
 
 .vocab-card:hover {
@@ -1093,6 +1095,18 @@ body {
   gap: 12px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.language-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.language-add input {
+  flex: 1;
+  min-width: 200px;
 }
 
 .home-vocab-empty {

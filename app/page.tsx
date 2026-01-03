@@ -61,6 +61,10 @@ export default function Home() {
   const [username, setUsername] = useState<string>("admin");
   const [password, setPassword] = useState<string>("admin");
   const [authError, setAuthError] = useState<string | null>(null);
+  const [languageOptions, setLanguageOptions] = useState<string[]>([]);
+  const [showLanguageModal, setShowLanguageModal] = useState<boolean>(false);
+  const [newLanguageInput, setNewLanguageInput] = useState<string>("");
+  const [addLanguageOpen, setAddLanguageOpen] = useState<boolean>(false);
 
   const [language, setLanguage] = useState<string | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty>("easy");
@@ -203,20 +207,24 @@ export default function Home() {
 
   useEffect(() => {
     if (!language) return;
+    if (authUser) {
+      void loadUserVocab(language);
+      return;
+    }
     const savedStudy = localStorage.getItem("lingoarc_study_pack");
     if (!savedStudy) {
       setStudyPack(null);
-      return;
-    }
-    try {
-      const parsed = JSON.parse(savedStudy) as StudyPack;
-      if (parsed && parsed.language === language) {
-        setStudyPack(parsed);
-      } else {
+    } else {
+      try {
+        const parsed = JSON.parse(savedStudy) as StudyPack;
+        if (parsed && parsed.language === language) {
+          setStudyPack(parsed);
+        } else {
+          setStudyPack(null);
+        }
+      } catch {
         setStudyPack(null);
       }
-    } catch {
-      setStudyPack(null);
     }
 
     const savedScenarioVocab = localStorage.getItem("lingoarc_scenario_vocab");
@@ -238,7 +246,7 @@ export default function Home() {
     } catch {
       setScenarioVocabMap({});
     }
-  }, [language]);
+  }, [authUser, language]);
 
   useEffect(() => {
     const loadAuth = async () => {
@@ -268,10 +276,15 @@ export default function Home() {
       setSessionId(null);
       setTaskText("");
       setTaskCompleted(false);
+      setLanguage(null);
+      setLanguageOptions([]);
+      setStudyPack(null);
+      setScenarioVocabMap({});
       return;
     }
     setAuthError(null);
     void fetchProgress();
+    void loadProfile();
   }, [authUser]);
 
   useEffect(() => {
@@ -372,6 +385,173 @@ export default function Home() {
       id: user.id,
       username: name || email.split("@")[0],
     });
+  }
+
+  async function loadProfile() {
+    if (!authUser) return;
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("username, languages, active_language")
+      .eq("id", authUser.id)
+      .single();
+
+    if (error) {
+      return;
+    }
+
+    const storedLanguages = Array.isArray(data?.languages) ? data?.languages : [];
+    const normalizedLanguages = data?.active_language && !storedLanguages.includes(data.active_language)
+      ? [...storedLanguages, data.active_language]
+      : storedLanguages;
+    setLanguageOptions(normalizedLanguages);
+    if (data?.active_language) {
+      setLanguage(data.active_language);
+      setShowLanguageModal(false);
+      return;
+    }
+
+    if (storedLanguages.length === 1) {
+      await saveLanguagePreference(storedLanguages[0], storedLanguages);
+      return;
+    }
+
+    const savedLanguage = localStorage.getItem("linguachat_language");
+    if (savedLanguage) {
+      await saveLanguagePreference(savedLanguage, storedLanguages);
+      return;
+    }
+
+    setShowLanguageModal(true);
+  }
+
+  async function saveLanguagePreference(value: string, existing?: string[]) {
+    if (!authUser) return;
+    const nextValue = value.trim();
+    if (!nextValue) return;
+    const nextLanguages = Array.from(new Set([...(existing ?? languageOptions), nextValue]));
+    setLanguage(nextValue);
+    setLanguageOptions(nextLanguages);
+    setShowLanguageModal(false);
+    setAddLanguageOpen(false);
+    setNewLanguageInput("");
+    await supabase.from("profiles").upsert({
+      id: authUser.id,
+      username: username || authUser.email?.split("@")[0] || "user",
+      languages: nextLanguages,
+      active_language: nextValue,
+    });
+  }
+
+  async function loadUserVocab(activeLanguage: string) {
+    if (!authUser) return;
+    const { data, error } = await supabase
+      .from("user_vocab")
+      .select("scope, scenario_id, word_key, word, translation, starred, count, last_clicked")
+      .eq("user_id", authUser.id)
+      .eq("language", activeLanguage);
+
+    if (error) {
+      return;
+    }
+
+    const chatEntries: VocabEntry[] = [];
+    const commonEntries: StudyEntry[] = [];
+    const scenarioMap: Record<string, StudyPack> = {};
+
+    (data || []).forEach((row) => {
+      if (row.scope === "chat") {
+        chatEntries.push({
+          key: row.word_key,
+          word: row.word,
+          translation: row.translation,
+          count: row.count || 1,
+          lastClicked: row.last_clicked ? Date.parse(row.last_clicked) : Date.now(),
+          starred: Boolean(row.starred),
+        });
+        return;
+      }
+      const entry = {
+        word: row.word,
+        translation: row.translation,
+        starred: Boolean(row.starred),
+      };
+      if (row.scope === "common") {
+        commonEntries.push(entry);
+      } else if (row.scope === "scenario" && row.scenario_id) {
+        if (!scenarioMap[row.scenario_id]) {
+          scenarioMap[row.scenario_id] = { language: activeLanguage, entries: [] };
+        }
+        scenarioMap[row.scenario_id].entries.push(entry);
+      }
+    });
+
+    setVocabEntries(chatEntries);
+    if (commonEntries.length) {
+      setStudyPack({ language: activeLanguage, entries: commonEntries });
+    } else {
+      setStudyPack(null);
+    }
+    setScenarioVocabMap(scenarioMap);
+  }
+
+  async function upsertUserVocab(rows: Array<{
+    scope: "chat" | "common" | "scenario";
+    scenarioId?: string | null;
+    wordKey: string;
+    word: string;
+    translation: string;
+    starred: boolean;
+    count?: number;
+    lastClicked?: number;
+  }>) {
+    if (!authUser || !language) return;
+    if (!rows.length) return;
+    const payload = rows.map((row) => ({
+      user_id: authUser.id,
+      language,
+      scope: row.scope,
+      scenario_id: row.scenarioId || null,
+      word_key: row.wordKey,
+      word: row.word,
+      translation: row.translation,
+      starred: row.starred,
+      count: row.count ?? 1,
+      last_clicked: new Date(row.lastClicked ?? Date.now()).toISOString(),
+    }));
+    await supabase.from("user_vocab").upsert(payload, {
+      onConflict: "user_id,language,scope,scenario_id,word_key",
+    });
+  }
+
+  async function deleteUserVocab(scope: "chat" | "common" | "scenario", wordKey: string, scenarioId?: string | null) {
+    if (!authUser || !language) return;
+    let query = supabase
+      .from("user_vocab")
+      .delete()
+      .eq("user_id", authUser.id)
+      .eq("language", language)
+      .eq("scope", scope)
+      .eq("word_key", wordKey);
+    if (scenarioId) {
+      query = query.eq("scenario_id", scenarioId);
+    } else {
+      query = query.is("scenario_id", null);
+    }
+    await query;
+  }
+
+  async function clearUserVocabScope(scope: "common" | "scenario", scenarioId?: string | null) {
+    if (!authUser || !language) return;
+    let query = supabase
+      .from("user_vocab")
+      .delete()
+      .eq("user_id", authUser.id)
+      .eq("language", language)
+      .eq("scope", scope);
+    if (scope === "scenario" && scenarioId) {
+      query = query.eq("scenario_id", scenarioId);
+    }
+    await query;
   }
 
   async function handleLogout() {
@@ -894,17 +1074,21 @@ export default function Home() {
   function upsertVocab(word: string, translation: string) {
     const key = normalizeWord(word);
     if (!key) return;
+    const existing = vocabEntries.find((entry) => entry.key === key);
+    const nextCount = existing ? existing.count + 1 : 1;
+    const nextStar = existing ? Boolean(existing.starred) : false;
+    const nextClicked = Date.now();
     setVocabEntries((prev) => {
-      const existing = prev.find((entry) => entry.key === key);
-      if (existing) {
+      const current = prev.find((entry) => entry.key === key);
+      if (current) {
         return prev.map((entry) =>
           entry.key === key
             ? {
                 ...entry,
                 word,
                 translation,
-                count: entry.count + 1,
-                lastClicked: Date.now(),
+                count: nextCount,
+                lastClicked: nextClicked,
                 starred: entry.starred,
               }
             : entry
@@ -912,9 +1096,22 @@ export default function Home() {
       }
       return [
         ...prev,
-        { key, word, translation, count: 1, lastClicked: Date.now(), starred: false },
+        { key, word, translation, count: nextCount, lastClicked: nextClicked, starred: false },
       ];
     });
+
+    void upsertUserVocab([
+      {
+        scope: "chat",
+        scenarioId: null,
+        wordKey: key,
+        word,
+        translation,
+        starred: nextStar,
+        count: nextCount,
+        lastClicked: nextClicked,
+      },
+    ]);
   }
 
   function clearVocab() {
@@ -923,28 +1120,49 @@ export default function Home() {
   }
 
   function deleteVocabEntry(key: string) {
+    const target = vocabEntries.find((entry) => entry.key === key);
     setVocabEntries((prev) => prev.filter((entry) => entry.key !== key));
     setFlippedCards((prev) => {
       const next = { ...prev };
       delete next[key];
       return next;
     });
+    if (target) {
+      void deleteUserVocab("chat", target.key);
+    }
   }
 
   function toggleVocabStar(key: string) {
+    const target = vocabEntries.find((entry) => entry.key === key);
     setVocabEntries((prev) =>
       prev.map((entry) =>
         entry.key === key ? { ...entry, starred: !entry.starred } : entry
       )
     );
+    if (target) {
+      void upsertUserVocab([
+        {
+          scope: "chat",
+          scenarioId: null,
+          wordKey: target.key,
+          word: target.word,
+          translation: target.translation,
+          starred: !target.starred,
+          count: target.count,
+          lastClicked: target.lastClicked,
+        },
+      ]);
+    }
   }
 
   function clearStudy() {
     setStudyPack(null);
     setStudyFlipped({});
+    void clearUserVocabScope("common");
   }
 
   function toggleStudyStar(index: number) {
+    const target = studyPack?.entries[index];
     setStudyPack((prev) => {
       if (!prev) return prev;
       const next = prev.entries.map((entry, i) =>
@@ -952,6 +1170,20 @@ export default function Home() {
       );
       return { ...prev, entries: next };
     });
+    if (target) {
+      void upsertUserVocab([
+        {
+          scope: "common",
+          scenarioId: null,
+          wordKey: normalizeWord(target.word),
+          word: target.word,
+          translation: target.translation,
+          starred: !target.starred,
+          count: 1,
+          lastClicked: Date.now(),
+        },
+      ]);
+    }
   }
 
   function clearScenarioVocab() {
@@ -962,6 +1194,7 @@ export default function Home() {
       return next;
     });
     setScenarioVocabFlipped({});
+    void clearUserVocabScope("scenario", activeScenarioVocab.id);
   }
 
   function toggleCard(key: string) {
@@ -1004,6 +1237,7 @@ export default function Home() {
   }
 
   function deleteStudyEntry(index: number) {
+    const target = studyPack?.entries[index];
     setStudyPack((prev) => {
       if (!prev) return prev;
       const next = prev.entries.filter((_, i) => i !== index);
@@ -1018,9 +1252,13 @@ export default function Home() {
       });
       return next;
     });
+    if (target) {
+      void deleteUserVocab("common", normalizeWord(target.word));
+    }
   }
 
   function toggleScenarioStar(index: number, scenarioId: string) {
+    const target = scenarioVocabMap[scenarioId]?.entries[index];
     setScenarioVocabMap((prev) => {
       const current = prev[scenarioId];
       if (!current) return prev;
@@ -1029,11 +1267,26 @@ export default function Home() {
       );
       return { ...prev, [scenarioId]: { ...current, entries: nextEntries } };
     });
+    if (target) {
+      void upsertUserVocab([
+        {
+          scope: "scenario",
+          scenarioId,
+          wordKey: normalizeWord(target.word),
+          word: target.word,
+          translation: target.translation,
+          starred: !target.starred,
+          count: 1,
+          lastClicked: Date.now(),
+        },
+      ]);
+    }
   }
 
   function deleteScenarioEntry(index: number) {
     if (!activeScenarioVocab) return;
     const scenarioId = activeScenarioVocab.id;
+    const target = scenarioVocabMap[scenarioId]?.entries[index];
     setScenarioVocabMap((prev) => {
       const current = prev[scenarioId];
       if (!current) return prev;
@@ -1049,6 +1302,9 @@ export default function Home() {
       });
       return next;
     });
+    if (target) {
+      void deleteUserVocab("scenario", normalizeWord(target.word), scenarioId);
+    }
   }
 
   async function generateStudyWords(count: number) {
@@ -1064,12 +1320,26 @@ export default function Home() {
       if (!res.ok) return;
       const data = (await res.json()) as { items: StudyEntry[] };
       if (!Array.isArray(data.items) || data.items.length === 0) return;
+      const incoming = data.items.map((item) => ({ ...item, starred: item.starred ?? false }));
 
       setStudyPack((prev) => {
-        const incoming = data.items.map((item) => ({ ...item, starred: item.starred ?? false }));
         const merged = [...(prev?.entries ?? []), ...incoming];
         return { language, entries: merged };
       });
+
+      const rows = incoming
+        .map((item) => ({
+          scope: "common" as const,
+          scenarioId: null,
+          wordKey: normalizeWord(item.word),
+          word: item.word,
+          translation: item.translation,
+          starred: Boolean(item.starred),
+          count: 1,
+          lastClicked: Date.now(),
+        }))
+        .filter((row) => row.wordKey);
+      void upsertUserVocab(rows);
     } finally {
       setStudyLoading(false);
     }
@@ -1097,13 +1367,27 @@ export default function Home() {
       if (!res.ok) return;
       const data = (await res.json()) as { items: StudyEntry[] };
       if (!Array.isArray(data.items) || data.items.length === 0) return;
+      const incoming = data.items.map((item) => ({ ...item, starred: item.starred ?? false }));
 
       setScenarioVocabMap((prev) => {
         const current = prev[scenarioId];
-        const incoming = data.items.map((item) => ({ ...item, starred: item.starred ?? false }));
         const merged = [...(current?.entries ?? []), ...incoming];
         return { ...prev, [scenarioId]: { language, entries: merged } };
       });
+
+      const rows = incoming
+        .map((item) => ({
+          scope: "scenario" as const,
+          scenarioId,
+          wordKey: normalizeWord(item.word),
+          word: item.word,
+          translation: item.translation,
+          starred: Boolean(item.starred),
+          count: 1,
+          lastClicked: Date.now(),
+        }))
+        .filter((row) => row.wordKey);
+      void upsertUserVocab(rows);
     } finally {
       setScenarioVocabLoading(false);
     }
@@ -1261,13 +1545,20 @@ export default function Home() {
             const frontText = studyFront === "word" ? entry.word : entry.translation;
             const backText = studyFront === "word" ? entry.translation : entry.word;
             return (
-              <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
-                <button
-                  type="button"
-                  className={`vocab-card ${flipped ? "flipped" : ""}`}
-                  onClick={() => toggleStudyCard(index)}
-                  aria-pressed={flipped ? "true" : "false"}
-                >
+                <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
+                  <div
+                    className={`vocab-card ${flipped ? "flipped" : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => toggleStudyCard(index)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        toggleStudyCard(index);
+                      }
+                    }}
+                    aria-pressed={flipped ? "true" : "false"}
+                  >
                     <div className="vocab-card-actions">
                       <button
                         type="button"
@@ -1305,18 +1596,18 @@ export default function Home() {
                         </svg>
                       </button>
                     </div>
-                  <div className="vocab-card-face">
-                    <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
-                      {flipped ? backText : frontText}
-                    </div>
-                    <div className="vocab-card-hint">
-                      {flipped ? "Tap to hide" : "Tap to flip"}
+                    <div className="vocab-card-face">
+                      <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
+                        {flipped ? backText : frontText}
+                      </div>
+                      <div className="vocab-card-hint">
+                        {flipped ? "Tap to hide" : "Tap to flip"}
+                      </div>
                     </div>
                   </div>
-                </button>
-              </div>
-            );
-          })}
+                </div>
+              );
+            })}
         </div>
       )}
     </section>
@@ -1478,10 +1769,17 @@ export default function Home() {
               const backText = scenarioVocabFront === "word" ? entry.translation : entry.word;
               return (
                 <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
-                  <button
-                    type="button"
+                  <div
                     className={`vocab-card ${flipped ? "flipped" : ""}`}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => toggleScenarioCard(index)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        toggleScenarioCard(index);
+                      }
+                    }}
                     aria-pressed={flipped ? "true" : "false"}
                   >
                     <div className="vocab-card-actions">
@@ -1529,7 +1827,7 @@ export default function Home() {
                         {flipped ? "Tap to hide" : "Tap to flip"}
                       </div>
                     </div>
-                  </button>
+                  </div>
                 </div>
               );
             })}
@@ -1632,12 +1930,47 @@ export default function Home() {
           <div className="top-controls">
             <div className="field">
               <label className="label">Language</label>
-              <input
-                type="text"
+              <select
                 value={language || ""}
-                onChange={(event) => setLanguage(event.target.value)}
-                placeholder="Spanish, Japanese"
-              />
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === "__add__") {
+                    setAddLanguageOpen(true);
+                    return;
+                  }
+                  setAddLanguageOpen(false);
+                  if (value) {
+                    void saveLanguagePreference(value);
+                  }
+                }}
+              >
+                {languageOptions.length === 0 ? (
+                  <option value="">Select language</option>
+                ) : null}
+                {languageOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+                <option value="__add__">+ Add new language</option>
+              </select>
+              {addLanguageOpen ? (
+                <div className="language-add">
+                  <input
+                    type="text"
+                    value={newLanguageInput}
+                    onChange={(event) => setNewLanguageInput(event.target.value)}
+                    placeholder="Add language"
+                  />
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => void saveLanguagePreference(newLanguageInput)}
+                  >
+                    Save
+                  </button>
+                </div>
+              ) : null}
             </div>
             <div className="field">
               <label className="label">Difficulty</label>
@@ -1789,6 +2122,48 @@ export default function Home() {
         </div>
       ) : null}
 
+      {showLanguageModal && authUser ? (
+        <div className="vocab-modal-overlay" onClick={() => {}}>
+          <div className="vocab-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="vocab-modal-header">
+              <div className="vocab-title">Choose your language</div>
+            </div>
+            <div className="vocab-modal-body">
+              {languageOptions.length ? (
+                <div className="vocab-list">
+                  {languageOptions.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className="vocab-row"
+                      onClick={() => void saveLanguagePreference(option)}
+                    >
+                      <div className="vocab-word">{option}</div>
+                      <div className="vocab-translation">Select</div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <div className="language-add">
+                <input
+                  type="text"
+                  value={newLanguageInput}
+                  onChange={(event) => setNewLanguageInput(event.target.value)}
+                  placeholder="Add a language"
+                />
+                <button
+                  type="button"
+                  className="solid"
+                  onClick={() => void saveLanguagePreference(newLanguageInput)}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {tooltip ? (
         <div
           ref={tooltipRef}
@@ -1874,10 +2249,17 @@ export default function Home() {
                       const backText = vocabFront === "word" ? entry.translation : entry.word;
                       return (
                         <div key={entry.key} className="vocab-card-wrap">
-                          <button
-                            type="button"
+                          <div
                             className={`vocab-card ${flipped ? "flipped" : ""}`}
+                            role="button"
+                            tabIndex={0}
                             onClick={() => toggleCard(entry.key)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                toggleCard(entry.key);
+                              }
+                            }}
                             aria-pressed={flipped ? "true" : "false"}
                           >
                             <div className="vocab-card-actions">
@@ -1925,7 +2307,7 @@ export default function Home() {
                                 {flipped ? "Tap to hide" : "Tap to flip"}
                               </div>
                             </div>
-                          </button>
+                          </div>
                         </div>
                       );
                     })}
