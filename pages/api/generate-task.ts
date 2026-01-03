@@ -8,7 +8,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
-  const { scenarioTitle, scenarioSubtitle, roleGuide, language, difficulty, previousTasks } = body || {};
+  const { scenarioTitle, scenarioSubtitle, roleGuide, userRole, language, difficulty, previousTasks } = body || {};
 
   if (!scenarioTitle || !language) {
     res.status(400).json({ error: "Missing scenarioTitle or language" });
@@ -35,6 +35,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             "Keep it concrete and plausible for the scenario.",
             "Avoid repeating the tasks in the avoid list.",
             "Use simple, common words suitable for language learners.",
+            "The task is for the learner's role, not the staff role.",
             "Output only the task sentence, no quotes or extra text.",
           ].join(" "),
         },
@@ -49,6 +50,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             `Scenario: ${scenarioTitle}`,
             scenarioSubtitle ? `Scenario detail: ${scenarioSubtitle}` : "",
             roleGuide ? `Role guide: ${roleGuide}` : "",
+            `Learner role: ${typeof userRole === "string" && userRole ? userRole : "guest/customer"}`,
             difficulty ? `Difficulty: ${difficulty}` : "",
             `Avoid tasks:\n${avoidList}`,
           ]

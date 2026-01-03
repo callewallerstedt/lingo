@@ -37,6 +37,16 @@ type VocabEntry = {
   lastClicked: number;
 };
 
+type StudyEntry = {
+  word: string;
+  translation: string;
+};
+
+type StudyPack = {
+  language: string;
+  entries: StudyEntry[];
+};
+
 type ProgressMap = Record<string, number>;
 
 type SuggestionPayload = {
@@ -78,6 +88,11 @@ export default function Home() {
   const [vocabMode, setVocabMode] = useState<"list" | "cards">("list");
   const [vocabFront, setVocabFront] = useState<"word" | "translation">("word");
   const [flippedCards, setFlippedCards] = useState<Record<string, boolean>>({});
+  const [studyPack, setStudyPack] = useState<StudyPack | null>(null);
+  const [studyMode, setStudyMode] = useState<"list" | "cards">("list");
+  const [studyFront, setStudyFront] = useState<"word" | "translation">("word");
+  const [studyFlipped, setStudyFlipped] = useState<Record<number, boolean>>({});
+  const [studyLoading, setStudyLoading] = useState<boolean>(false);
 
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -94,6 +109,7 @@ export default function Home() {
     const savedLanguage = localStorage.getItem("linguachat_language");
     const savedVocab = localStorage.getItem("lingoarc_vocab");
     const savedFront = localStorage.getItem("lingoarc_vocab_front");
+    const savedStudy = localStorage.getItem("lingoarc_study_pack");
     const savedUsername = localStorage.getItem("lingoarc_username");
     if (savedVocab) {
       try {
@@ -103,6 +119,16 @@ export default function Home() {
         }
       } catch {
         // Ignore malformed vocab cache
+      }
+    }
+    if (savedStudy) {
+      try {
+        const parsed = JSON.parse(savedStudy) as StudyPack;
+        if (parsed && typeof parsed.language === "string" && Array.isArray(parsed.entries)) {
+          setStudyPack(parsed);
+        }
+      } catch {
+        // Ignore malformed study cache
       }
     }
     if (savedLanguage) {
@@ -133,12 +159,37 @@ export default function Home() {
   }, [vocabEntries]);
 
   useEffect(() => {
+    if (studyPack) {
+      localStorage.setItem("lingoarc_study_pack", JSON.stringify(studyPack));
+    }
+  }, [studyPack]);
+
+  useEffect(() => {
     localStorage.setItem("lingoarc_vocab_front", vocabFront);
   }, [vocabFront]);
 
   useEffect(() => {
     if (language) {
       localStorage.setItem("linguachat_language", language);
+    }
+  }, [language]);
+
+  useEffect(() => {
+    if (!language) return;
+    const savedStudy = localStorage.getItem("lingoarc_study_pack");
+    if (!savedStudy) {
+      setStudyPack(null);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(savedStudy) as StudyPack;
+      if (parsed && parsed.language === language) {
+        setStudyPack(parsed);
+      } else {
+        setStudyPack(null);
+      }
+    } catch {
+      setStudyPack(null);
     }
   }, [language]);
 
@@ -388,6 +439,7 @@ export default function Home() {
           scenarioTitle: scenario.title,
           scenarioSubtitle: scenario.subtitle,
           roleGuide: scenario.roleGuide,
+          userRole: scenario.userRole,
           language,
           difficulty,
           previousTasks,
@@ -822,10 +874,22 @@ export default function Home() {
     setFlippedCards({});
   }
 
+  function clearStudy() {
+    setStudyPack(null);
+    setStudyFlipped({});
+  }
+
   function toggleCard(key: string) {
     setFlippedCards((prev) => ({
       ...prev,
       [key]: !prev[key],
+    }));
+  }
+
+  function toggleStudyCard(index: number) {
+    setStudyFlipped((prev) => ({
+      ...prev,
+      [index]: !prev[index],
     }));
   }
 
@@ -846,6 +910,33 @@ export default function Home() {
     }
     return "";
   }
+
+  async function generateStudyWords(count: number) {
+    if (!language || studyLoading) return;
+    setStudyLoading(true);
+    try {
+      const existing = studyPack?.entries.map((entry) => entry.word) ?? [];
+      const res = await fetch("/api/vocab-list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language, count, existing }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { items: StudyEntry[] };
+      if (!Array.isArray(data.items) || data.items.length === 0) return;
+
+      setStudyPack((prev) => {
+        const merged = [...(prev?.entries ?? []), ...data.items];
+        return { language, entries: merged };
+      });
+    } finally {
+      setStudyLoading(false);
+    }
+  }
+
+  const sortedVocab = useMemo(() => {
+    return vocabEntries.slice().sort((a, b) => b.lastClicked - a.lastClicked);
+  }, [vocabEntries]);
 
   const dashboardCards = (
     <div className="scenario-grid">
@@ -1049,6 +1140,104 @@ export default function Home() {
           </div>
         ) : view === "dashboard" ? (
           <section className="dashboard">
+            <section className="home-vocab">
+              <div className="home-vocab-header">
+                <div>
+                  <h2>Vocabulary</h2>
+                  <p>Top words to jump into conversations quickly.</p>
+                </div>
+                <div className="home-vocab-actions">
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => generateStudyWords(30)}
+                    disabled={!language || studyLoading}
+                  >
+                    {studyLoading ? "Generating" : "Generate 30"}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => generateStudyWords(10)}
+                    disabled={!language || studyLoading}
+                  >
+                    {studyLoading ? "Generating" : "Generate 10 more"}
+                  </button>
+                  <button type="button" className="ghost" onClick={clearStudy}>
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div className="home-vocab-controls">
+                <div className="segmented">
+                  <button
+                    type="button"
+                    className={`segmented-btn ${studyMode === "list" ? "active" : ""}`}
+                    onClick={() => setStudyMode("list")}
+                  >
+                    List
+                  </button>
+                  <button
+                    type="button"
+                    className={`segmented-btn ${studyMode === "cards" ? "active" : ""}`}
+                    onClick={() => setStudyMode("cards")}
+                  >
+                    Flashcards
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    setStudyFront((prev) => (prev === "word" ? "translation" : "word"));
+                    setStudyFlipped({});
+                  }}
+                >
+                  Start: {studyFront === "word" ? "Target" : "English"}
+                </button>
+              </div>
+              {!language ? (
+                <p className="dashboard-alert">Set a language above to generate vocabulary.</p>
+              ) : !studyPack || studyPack.entries.length === 0 ? (
+                <div className="home-vocab-empty">Generate a list to start studying.</div>
+              ) : studyMode === "list" ? (
+                <div className="vocab-list">
+                  {studyPack.entries.map((entry, index) => (
+                    <div key={`${entry.word}-${index}`} className="vocab-row">
+                      <div className="vocab-word">{entry.word}</div>
+                      <div className="vocab-translation">{entry.translation}</div>
+                      <div className="vocab-count">#{index + 1}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="vocab-cards">
+                  {studyPack.entries.map((entry, index) => {
+                    const flipped = Boolean(studyFlipped[index]);
+                    const frontText = studyFront === "word" ? entry.word : entry.translation;
+                    const backText = studyFront === "word" ? entry.translation : entry.word;
+                    return (
+                      <button
+                        key={`${entry.word}-${index}`}
+                        type="button"
+                        className={`vocab-card ${flipped ? "flipped" : ""}`}
+                        onClick={() => toggleStudyCard(index)}
+                        aria-pressed={flipped ? "true" : "false"}
+                      >
+                        <div className="vocab-card-face">
+                          <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
+                            {flipped ? backText : frontText}
+                          </div>
+                          <div className="vocab-card-hint">
+                            {flipped ? "Tap to hide" : "Tap to flip"}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
             <div className="dashboard-header">
               <div>
                 <h2>Pick a scenario</h2>
@@ -1152,10 +1341,7 @@ export default function Home() {
                 <div className="vocab-empty">Click words in the chat to save them here.</div>
               ) : vocabMode === "list" ? (
                 <div className="vocab-list">
-                  {vocabEntries
-                    .slice()
-                    .sort((a, b) => b.lastClicked - a.lastClicked)
-                    .map((entry) => (
+                  {sortedVocab.map((entry) => (
                       <div key={entry.key} className="vocab-row">
                         <div className="vocab-word">{entry.word}</div>
                         <div className="vocab-translation">{entry.translation}</div>
@@ -1165,10 +1351,7 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="vocab-cards">
-                  {vocabEntries
-                    .slice()
-                    .sort((a, b) => b.lastClicked - a.lastClicked)
-                    .map((entry) => {
+                  {sortedVocab.map((entry) => {
                       const flipped = Boolean(flippedCards[entry.key]);
                       const frontText = vocabFront === "word" ? entry.word : entry.translation;
                       const backText = vocabFront === "word" ? entry.translation : entry.word;

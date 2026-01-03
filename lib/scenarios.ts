@@ -4,6 +4,7 @@ export type ScenarioDefinition = {
   subtitle: string;
   roleGuide: string;
   startPrompt: string;
+  userRole: string;
 };
 
 export const SCENARIOS: ScenarioDefinition[] = [
@@ -15,6 +16,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: barista. Keep it brief and transactional. Focus on order details, size, milk, and payment.",
     startPrompt:
       "Start with a short, common barista opener in the target language.",
+    userRole: "customer",
   },
   {
     id: "restaurant",
@@ -24,6 +26,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: waiter. Be professional and concise. Offer menus or specials and confirm the order.",
     startPrompt:
       "Start with a standard waiter opener in the target language.",
+    userRole: "guest",
   },
   {
     id: "bakery",
@@ -33,6 +36,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: bakery clerk. Keep it short, focus on items, quantities, and payment.",
     startPrompt:
       "Start with a short, friendly service opener in the target language.",
+    userRole: "customer",
   },
   {
     id: "grocery",
@@ -42,6 +46,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: store staff. Be helpful and direct. Focus on aisles, brands, and prices.",
     startPrompt:
       "Start with a simple offer of help in the target language.",
+    userRole: "customer",
   },
   {
     id: "pharmacy",
@@ -51,6 +56,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: pharmacist. Be calm and concise. Ask about symptoms and allergies.",
     startPrompt:
       "Start with a short, professional greeting in the target language.",
+    userRole: "customer",
   },
   {
     id: "hotel",
@@ -60,6 +66,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: front desk staff. Be polite and efficient. Confirm booking details.",
     startPrompt:
       "Start with a standard check-in greeting in the target language.",
+    userRole: "guest",
   },
   {
     id: "airport",
@@ -69,6 +76,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: airline agent. Be direct and procedural. Ask about passport and baggage.",
     startPrompt:
       "Start with a short check-in question in the target language.",
+    userRole: "passenger",
   },
   {
     id: "customs",
@@ -78,6 +86,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: customs officer. Be formal, brief, and direct. Ask about purpose and length of stay.",
     startPrompt:
       "Start with a direct customs question in the target language.",
+    userRole: "traveler",
   },
   {
     id: "taxi",
@@ -87,6 +96,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: taxi driver. Be short and practical. Confirm destination and route.",
     startPrompt:
       "Start with a brief question about destination in the target language.",
+    userRole: "passenger",
   },
   {
     id: "train",
@@ -96,6 +106,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: ticket clerk. Be quick and clear. Ask about destination and time.",
     startPrompt:
       "Start with a short ticket question in the target language.",
+    userRole: "traveler",
   },
   {
     id: "doctor",
@@ -105,6 +116,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: doctor. Be calm and concise. Ask about symptoms and duration.",
     startPrompt:
       "Start with a clinical opener like asking what brings them in.",
+    userRole: "patient",
   },
   {
     id: "job",
@@ -114,6 +126,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: interviewer. Be professional and structured. Ask clear questions.",
     startPrompt:
       "Start with a professional greeting and a first question.",
+    userRole: "candidate",
   },
   {
     id: "first-day",
@@ -123,6 +136,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: coworker. Be friendly and brief. Ask about their role or tasks.",
     startPrompt:
       "Start with a short welcome in the target language.",
+    userRole: "new coworker",
   },
   {
     id: "apartment",
@@ -132,6 +146,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: landlord or agent. Be direct. Answer questions about costs and terms.",
     startPrompt:
       "Start with a brief greeting and offer to show the place.",
+    userRole: "renter",
   },
   {
     id: "bank",
@@ -141,6 +156,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: bank teller. Be formal and concise. Ask for ID and requirements.",
     startPrompt:
       "Start with a standard service greeting in the target language.",
+    userRole: "customer",
   },
   {
     id: "gym",
@@ -150,6 +166,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: front desk staff. Be brief and helpful. Provide membership details.",
     startPrompt:
       "Start with a short greeting and ask how you can help.",
+    userRole: "member",
   },
   {
     id: "salon",
@@ -159,6 +176,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: stylist or receptionist. Be friendly and concise. Ask about time and style.",
     startPrompt:
       "Start with a short greeting and ask what they want.",
+    userRole: "customer",
   },
   {
     id: "post",
@@ -168,6 +186,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: clerk. Be direct. Ask about destination, size, and speed.",
     startPrompt:
       "Start with a short service greeting in the target language.",
+    userRole: "customer",
   },
   {
     id: "tech",
@@ -177,6 +196,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: support agent. Be clear and step-by-step. Ask for details.",
     startPrompt:
       "Start with a brief help offer in the target language.",
+    userRole: "customer",
   },
   {
     id: "movie",
@@ -186,6 +206,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: ticket clerk. Be short and practical. Ask about time and seats.",
     startPrompt:
       "Start with a short ticket question in the target language.",
+    userRole: "customer",
   },
   {
     id: "museum",
@@ -195,6 +216,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: staff. Be polite and concise. Explain tickets and directions.",
     startPrompt:
       "Start with a simple greeting in the target language.",
+    userRole: "visitor",
   },
   {
     id: "market",
@@ -204,6 +226,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: vendor. Be friendly and short. Talk about price and freshness.",
     startPrompt:
       "Start with a simple greeting in the target language.",
+    userRole: "customer",
   },
   {
     id: "dating",
@@ -213,6 +236,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: date. Friendly, natural, and concise. Keep it light.",
     startPrompt:
       "Start with a friendly greeting and a simple question.",
+    userRole: "date",
   },
   {
     id: "family",
@@ -222,6 +246,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: family member. Warm but not too chatty. Ask a natural question.",
     startPrompt:
       "Start with a warm greeting tied to the gathering.",
+    userRole: "relative",
   },
   {
     id: "school",
@@ -231,5 +256,6 @@ export const SCENARIOS: ScenarioDefinition[] = [
       "Role: classmate. Casual and concise. Focus on school topics.",
     startPrompt:
       "Start with a short school-related opener.",
+    userRole: "classmate",
   },
 ];
