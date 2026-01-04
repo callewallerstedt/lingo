@@ -673,6 +673,7 @@ textarea:focus {
   display: grid;
   place-items: center;
   opacity: 0.2;
+  position: relative;
 }
 
 .vocab-card-icon svg {
@@ -724,6 +725,31 @@ textarea:focus {
   background: rgba(250, 204, 21, 0.22);
   color: #facc15;
   opacity: 1;
+}
+
+.vocab-card-icon.holding {
+  opacity: 1;
+  background: rgba(250, 204, 21, 0.18);
+}
+
+.vocab-card-icon.holding::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 999px;
+  border: 1px solid rgba(250, 204, 21, 0.6);
+  animation: hold-progress 2s linear forwards;
+}
+
+@keyframes hold-progress {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(1.2);
+    opacity: 0.95;
+  }
 }
 
 .vocab-card-word {

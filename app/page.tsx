@@ -2724,6 +2724,7 @@ export default function Home() {
               const flipped = Boolean(topicVocabFlipped[index]);
               const frontText = topicVocabFront === "word" ? entry.word : entry.translation;
               const backText = topicVocabFront === "word" ? entry.translation : entry.word;
+              const holdId = `topic-${activeTopic}-${index}`;
               return (
                 <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
                   <div
@@ -2769,22 +2770,24 @@ export default function Home() {
                       </button>
                       <button
                         type="button"
-                        className="vocab-card-icon"
+                        className={`vocab-card-icon ${holdDeleteId === holdId ? "holding" : ""}`}
                         onPointerDown={(event) => {
                           event.stopPropagation();
-                          startArchiveHold(() => deleteTopicEntry(index));
+                          if (event.button !== 0) return;
+                          startArchiveHold(holdId, () => deleteTopicEntry(index));
                         }}
                         onPointerUp={(event) => {
                           event.stopPropagation();
-                          endArchiveHold(() => void archiveTopicEntry(index));
+                          if (event.button !== 0) return;
+                          endArchiveHold(holdId, () => void archiveTopicEntry(index));
                         }}
                         onPointerLeave={(event) => {
                           event.stopPropagation();
-                          endArchiveHold(() => void archiveTopicEntry(index));
+                          cancelArchiveHold(holdId);
                         }}
                         onPointerCancel={(event) => {
                           event.stopPropagation();
-                          endArchiveHold(() => void archiveTopicEntry(index));
+                          cancelArchiveHold(holdId);
                         }}
                         aria-label="Archive (hold to delete)"
                       >
@@ -3392,6 +3395,7 @@ export default function Home() {
                       const frontText = vocabFront === "word" ? entry.word : entry.translation;
                       const backText = vocabFront === "word" ? entry.translation : entry.word;
                       const key = exampleKey("chat", entry.word);
+                      const holdId = `chat-${entry.key}`;
                       // examples are shown in a modal
                       return (
                         <div key={entry.key} className="vocab-card-wrap">
@@ -3438,22 +3442,24 @@ export default function Home() {
                               </button>
                               <button
                                 type="button"
-                                className="vocab-card-icon"
+                                className={`vocab-card-icon ${holdDeleteId === holdId ? "holding" : ""}`}
                                 onPointerDown={(event) => {
                                   event.stopPropagation();
-                                  startArchiveHold(() => deleteVocabEntry(entry.key));
+                                  if (event.button !== 0) return;
+                                  startArchiveHold(holdId, () => deleteVocabEntry(entry.key));
                                 }}
                                 onPointerUp={(event) => {
                                   event.stopPropagation();
-                                  endArchiveHold(() => void archiveVocabEntry(entry.key));
+                                  if (event.button !== 0) return;
+                                  endArchiveHold(holdId, () => void archiveVocabEntry(entry.key));
                                 }}
                                 onPointerLeave={(event) => {
                                   event.stopPropagation();
-                                  endArchiveHold(() => void archiveVocabEntry(entry.key));
+                                  cancelArchiveHold(holdId);
                                 }}
                                 onPointerCancel={(event) => {
                                   event.stopPropagation();
-                                  endArchiveHold(() => void archiveVocabEntry(entry.key));
+                                  cancelArchiveHold(holdId);
                                 }}
                                 aria-label="Archive (hold to delete)"
                               >
