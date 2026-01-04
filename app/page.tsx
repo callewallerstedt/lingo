@@ -1489,9 +1489,9 @@ export default function Home() {
       return;
     }
     if (scope === "common") {
+      const key = normalizeWord(word);
       setStudyPack((prev) => {
         const entries = prev?.entries || [];
-        const key = normalizeWord(word);
         const index = entries.findIndex((entry) => normalizeWord(entry.word) === key);
         if (index !== -1) {
           const nextEntries = entries.map((entry, idx) =>
@@ -1522,9 +1522,9 @@ export default function Home() {
       return;
     }
     if (scope === "scenario" && scenarioId) {
+      const key = normalizeWord(word);
       setScenarioVocabMap((prev) => {
         const current = prev[scenarioId]?.entries || [];
-        const key = normalizeWord(word);
         const index = current.findIndex((entry) => normalizeWord(entry.word) === key);
         if (index !== -1) {
           const nextEntries = current.map((entry, idx) =>
@@ -1561,9 +1561,9 @@ export default function Home() {
       return;
     }
     if (scope === "topic" && scenarioId) {
+      const key = normalizeWord(word);
       setTopicVocabMap((prev) => {
         const current = prev[scenarioId]?.entries || [];
-        const key = normalizeWord(word);
         const index = current.findIndex((entry) => normalizeWord(entry.word) === key);
         if (index !== -1) {
           const nextEntries = current.map((entry, idx) =>
