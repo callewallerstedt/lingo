@@ -671,6 +671,27 @@ textarea:focus {
   height: 12px;
 }
 
+.vocab-examples {
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.vocab-examples ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+}
+
+.vocab-examples-forms {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+}
+
 .vocab-card-icon:hover {
   background: rgba(255, 255, 255, 0.14);
 }

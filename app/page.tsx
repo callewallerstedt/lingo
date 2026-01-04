@@ -101,6 +101,8 @@ export default function Home() {
   const [studyFront, setStudyFront] = useState<"word" | "translation">("word");
   const [studyFlipped, setStudyFlipped] = useState<Record<number, boolean>>({});
   const [studyLoading, setStudyLoading] = useState<boolean>(false);
+  const [exampleMap, setExampleMap] = useState<Record<string, { sentences: string[]; forms: string[] }>>({});
+  const [exampleLoading, setExampleLoading] = useState<Record<string, boolean>>({});
   const [scenarioVocabMap, setScenarioVocabMap] = useState<Record<string, StudyPack>>({});
   const [scenarioVocabMode, setScenarioVocabMode] = useState<"list" | "cards">("list");
   const [scenarioVocabFront, setScenarioVocabFront] = useState<"word" | "translation">("word");
@@ -1310,6 +1312,32 @@ export default function Home() {
       .replace(/[^\p{L}\p{M}\p{Nd}'-]/gu, "");
   }
 
+  function exampleKey(scope: "chat" | "common" | "scenario", word: string, scenarioId?: string | null) {
+    const base = normalizeWord(word) || word.toLowerCase();
+    return `${scope}:${scenarioId || "none"}:${base}`;
+  }
+
+  async function generateExamples(scope: "chat" | "common" | "scenario", word: string, scenarioId?: string | null) {
+    if (!language) return;
+    const key = exampleKey(scope, word, scenarioId);
+    if (exampleLoading[key]) return;
+    setExampleLoading((prev) => ({ ...prev, [key]: true }));
+    try {
+      const res = await fetch("/api/examples", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language, word }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { sentences?: string[]; forms?: string[] };
+      const sentences = Array.isArray(data.sentences) ? data.sentences : [];
+      const forms = Array.isArray(data.forms) ? data.forms : [];
+      setExampleMap((prev) => ({ ...prev, [key]: { sentences, forms } }));
+    } finally {
+      setExampleLoading((prev) => ({ ...prev, [key]: false }));
+    }
+  }
+
   function getLastAssistant(source: Message[]) {
     for (let i = source.length - 1; i >= 0; i -= 1) {
       if (source[i].role === "assistant") return source[i].content;
@@ -1617,19 +1645,21 @@ export default function Home() {
           ))}
         </div>
       ) : (
-        <div className="vocab-cards">
-          {(showStudyStarredOnly
-            ? studyPack.entries.map((entry, index) => ({ entry, index })).filter((item) => item.entry.starred)
-            : studyPack.entries.map((entry, index) => ({ entry, index }))
-          ).map(({ entry, index }) => {
-            const flipped = Boolean(studyFlipped[index]);
-            const frontText = studyFront === "word" ? entry.word : entry.translation;
-            const backText = studyFront === "word" ? entry.translation : entry.word;
-            return (
-                <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
-                  <div
-                    className={`vocab-card ${flipped ? "flipped" : ""}`}
-                    role="button"
+                <div className="vocab-cards">
+                  {(showStudyStarredOnly
+                    ? studyPack.entries.map((entry, index) => ({ entry, index })).filter((item) => item.entry.starred)
+                    : studyPack.entries.map((entry, index) => ({ entry, index }))
+                  ).map(({ entry, index }) => {
+                    const flipped = Boolean(studyFlipped[index]);
+                    const frontText = studyFront === "word" ? entry.word : entry.translation;
+                    const backText = studyFront === "word" ? entry.translation : entry.word;
+                    const key = exampleKey("common", entry.word);
+                    const examples = exampleMap[key];
+                    return (
+                      <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
+                        <div
+                          className={`vocab-card ${flipped ? "flipped" : ""}`}
+                          role="button"
                     tabIndex={0}
                     onClick={() => toggleStudyCard(index)}
                     onKeyDown={(event) => {
@@ -1639,57 +1669,84 @@ export default function Home() {
                       }
                     }}
                     aria-pressed={flipped ? "true" : "false"}
-                  >
-                    <div className="vocab-card-actions">
-                      <button
-                        type="button"
-                        className={`vocab-card-icon ${entry.starred ? "active" : ""}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toggleStudyStar(index);
-                        }}
-                        aria-label="Star"
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <path
-                            d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
-                            fill="currentColor"
-                          />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        className="vocab-card-icon"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          deleteStudyEntry(index);
-                        }}
-                        aria-label="Delete"
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <path
-                            d="M6 6l12 12M18 6L6 18"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                          />
-                        </svg>
-                      </button>
-                    </div>
-                    <div className="vocab-card-face">
-                      <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
-                        {flipped ? backText : frontText}
+                        >
+                          <div className="vocab-card-actions">
+                            <button
+                              type="button"
+                              className={`vocab-card-icon ${entry.starred ? "active" : ""}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleStudyStar(index);
+                              }}
+                              aria-label="Star"
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path
+                                  d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
+                                  fill="currentColor"
+                                />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              className="vocab-card-icon"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void generateExamples("common", entry.word);
+                              }}
+                              aria-label="Examples"
+                            >
+                              Ex
+                            </button>
+                            <button
+                              type="button"
+                              className="vocab-card-icon"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                deleteStudyEntry(index);
+                              }}
+                              aria-label="Delete"
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path
+                                  d="M6 6l12 12M18 6L6 18"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                />
+                              </svg>
+                            </button>
+                          </div>
+                          <div className="vocab-card-face">
+                            <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
+                              {flipped ? backText : frontText}
+                            </div>
+                            <div className="vocab-card-hint">
+                              {flipped ? "Tap to hide" : "Tap to flip"}
+                            </div>
+                          </div>
+                        </div>
+                        {exampleLoading[key] ? (
+                          <div className="vocab-examples">Generating examples...</div>
+                        ) : examples ? (
+                          <div className="vocab-examples">
+                            {examples.forms?.length ? (
+                              <div className="vocab-examples-forms">
+                                Forms: {examples.forms.join(", ")}
+                              </div>
+                            ) : null}
+                            <ul>
+                              {examples.sentences.map((sentence, sentenceIndex) => (
+                                <li key={`${key}-${sentenceIndex}`}>{sentence}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="vocab-card-hint">
-                        {flipped ? "Tap to hide" : "Tap to flip"}
-                      </div>
-                    </div>
-                  </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
-        </div>
       )}
     </section>
   );
@@ -1848,6 +1905,8 @@ export default function Home() {
               const flipped = Boolean(scenarioVocabFlipped[index]);
               const frontText = scenarioVocabFront === "word" ? entry.word : entry.translation;
               const backText = scenarioVocabFront === "word" ? entry.translation : entry.word;
+              const key = exampleKey("scenario", entry.word, activeScenarioVocab.id);
+              const examples = exampleMap[key];
               return (
                 <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
                   <div
@@ -1885,6 +1944,17 @@ export default function Home() {
                         className="vocab-card-icon"
                         onClick={(event) => {
                           event.stopPropagation();
+                          void generateExamples("scenario", entry.word, activeScenarioVocab.id);
+                        }}
+                        aria-label="Examples"
+                      >
+                        Ex
+                      </button>
+                      <button
+                        type="button"
+                        className="vocab-card-icon"
+                        onClick={(event) => {
+                          event.stopPropagation();
                           deleteScenarioEntry(index);
                         }}
                         aria-label="Delete"
@@ -1909,6 +1979,22 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
+                  {exampleLoading[key] ? (
+                    <div className="vocab-examples">Generating examples...</div>
+                  ) : examples ? (
+                    <div className="vocab-examples">
+                      {examples.forms?.length ? (
+                        <div className="vocab-examples-forms">
+                          Forms: {examples.forms.join(", ")}
+                        </div>
+                      ) : null}
+                      <ul>
+                        {examples.sentences.map((sentence, sentenceIndex) => (
+                          <li key={`${key}-${sentenceIndex}`}>{sentence}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
@@ -2339,6 +2425,8 @@ export default function Home() {
                       const flipped = Boolean(flippedCards[entry.key]);
                       const frontText = vocabFront === "word" ? entry.word : entry.translation;
                       const backText = vocabFront === "word" ? entry.translation : entry.word;
+                      const key = exampleKey("chat", entry.word);
+                      const examples = exampleMap[key];
                       return (
                         <div key={entry.key} className="vocab-card-wrap">
                           <div
@@ -2376,6 +2464,17 @@ export default function Home() {
                                 className="vocab-card-icon"
                                 onClick={(event) => {
                                   event.stopPropagation();
+                                  void generateExamples("chat", entry.word);
+                                }}
+                                aria-label="Examples"
+                              >
+                                Ex
+                              </button>
+                              <button
+                                type="button"
+                                className="vocab-card-icon"
+                                onClick={(event) => {
+                                  event.stopPropagation();
                                   deleteVocabEntry(entry.key);
                                 }}
                                 aria-label="Delete"
@@ -2400,6 +2499,22 @@ export default function Home() {
                               </div>
                             </div>
                           </div>
+                          {exampleLoading[key] ? (
+                            <div className="vocab-examples">Generating examples...</div>
+                          ) : examples ? (
+                            <div className="vocab-examples">
+                              {examples.forms?.length ? (
+                                <div className="vocab-examples-forms">
+                                  Forms: {examples.forms.join(", ")}
+                                </div>
+                              ) : null}
+                              <ul>
+                                {examples.sentences.map((sentence, sentenceIndex) => (
+                                  <li key={`${key}-${sentenceIndex}`}>{sentence}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
