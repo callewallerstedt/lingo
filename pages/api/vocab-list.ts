@@ -13,7 +13,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
-  const { language, count, existing, scenarioTitle, scenarioDetail, roleGuide, userRole } = body || {};
+  const { language, count, existing, scenarioTitle, scenarioDetail, roleGuide, userRole, level } = body || {};
 
   if (!language || typeof count !== "number") {
     res.status(400).json({ error: "Missing language or count" });
@@ -38,6 +38,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             "Each item must be JSON with keys word and translation.",
             "Word must be in the target language, translation in English.",
             "Choose practical, high-frequency vocabulary.",
+            level === "advanced"
+              ? "Include more difficult but important words that still appear in daily life."
+              : "Stick to core, easy, common words.",
             "If a scenario is provided, bias toward words commonly used in that setting.",
             "Avoid duplicates and avoid the words in the avoid list.",
             "Output only JSON: {\"items\":[{\"word\":\"...\",\"translation\":\"...\"}]}",

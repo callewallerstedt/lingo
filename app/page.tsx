@@ -1425,7 +1425,7 @@ export default function Home() {
     }
   }
 
-  async function generateStudyWords(count: number) {
+  async function generateStudyWords(count: number, level?: "core" | "advanced") {
     if (!language || studyLoading) return;
     setStudyLoading(true);
     try {
@@ -1433,7 +1433,7 @@ export default function Home() {
       const res = await fetch("/api/vocab-list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ language, count, existing }),
+        body: JSON.stringify({ language, count, existing, level }),
       });
       if (!res.ok) return;
       const data = (await res.json()) as { items: StudyEntry[] };
@@ -1588,6 +1588,14 @@ export default function Home() {
             disabled={!language || studyLoading}
           >
             {studyLoading ? "Generating" : "Generate 10 more"}
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => generateStudyWords(10, "advanced")}
+            disabled={!language || studyLoading}
+          >
+            {studyLoading ? "Generating" : "Important harder words"}
           </button>
           <button type="button" className="ghost" onClick={clearStudy}>
             Clear
@@ -2346,11 +2354,17 @@ export default function Home() {
             <div className="vocab-modal-body">
               {exampleModal.lines.length ? (
                 <div className="vocab-examples-list">
-                  {exampleModal.lines.map((line, index) => (
-                    <div key={`${exampleModal.word}-${index}`} className="vocab-example-line">
-                      {line}
-                    </div>
-                  ))}
+                  {exampleModal.lines.map((line, index) => {
+                    const parts = line.split(":");
+                    const label = parts.shift()?.trim() || "";
+                    const sentence = parts.join(":").trim();
+                    return (
+                      <div key={`${exampleModal.word}-${index}`} className="vocab-example-line">
+                        {label ? <strong>{label}:</strong> : null}{" "}
+                        {sentence ? renderClickableTokens(sentence, `ex-${index}`) : null}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="vocab-examples">Generating examples...</div>
