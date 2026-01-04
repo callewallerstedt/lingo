@@ -2077,8 +2077,7 @@ export default function Home() {
     <div className="app-shell">
       <header className="top-bar">
         <div className="brand">
-          <div className="brand-name">LingoArc</div>
-          <div className="brand-tag">Scenario-based language practice</div>
+          <div className="brand-name">NeoLingo</div>
         </div>
         {authUser ? (
           <div className="top-controls">
