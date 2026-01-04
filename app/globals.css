@@ -550,6 +550,8 @@ textarea:focus {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .vocab-tab,
@@ -621,6 +623,7 @@ textarea:focus {
   gap: 12px;
   grid-template-columns: repeat(auto-fill, minmax(160px, 160px));
   justify-content: start;
+  align-content: start;
 }
 
 .vocab-card {
@@ -629,6 +632,7 @@ textarea:focus {
   background: rgba(255, 255, 255, 0.04);
   padding: 0;
   min-height: 140px;
+  width: 160px;
   text-align: center;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
   position: relative;
@@ -643,6 +647,7 @@ textarea:focus {
   display: grid;
   gap: 8px;
   align-items: stretch;
+  width: 160px;
 }
 
 .vocab-card-actions {
@@ -667,6 +672,7 @@ textarea:focus {
   font-size: 12px;
   display: grid;
   place-items: center;
+  opacity: 0.2;
 }
 
 .vocab-card-icon svg {
@@ -711,11 +717,13 @@ textarea:focus {
 
 .vocab-card-icon:hover {
   background: rgba(255, 255, 255, 0.14);
+  opacity: 1;
 }
 
 .vocab-card-icon.active {
   background: rgba(250, 204, 21, 0.22);
   color: #facc15;
+  opacity: 1;
 }
 
 .vocab-card-word {
@@ -971,6 +979,8 @@ textarea:focus {
 body {
   background: #0f0f10;
   color: var(--ink);
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
 }
 
 .app-shell {
@@ -1354,6 +1364,43 @@ body {
   color: var(--muted);
 }
 
+.vocab-tabs {
+  display: inline-flex;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-border);
+}
+
+.vocab-tab-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.vocab-tab-btn.active {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.subtle-back {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.subtle-back-btn {
+  font-size: 12px;
+  padding: 6px 10px;
+  opacity: 0.7;
+}
+
+.subtle-back-btn:hover {
+  opacity: 1;
+}
+
 .home-vocab-actions {
   display: flex;
   gap: 8px;
@@ -1365,6 +1412,148 @@ body {
   gap: 12px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.vocab-toolbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.vocab-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.vocab-toolbar .ghost {
+  padding: 6px 12px;
+  border: none;
+  background: rgba(255, 255, 255, 0.2);
+  box-shadow: none;
+}
+
+.vocab-toolbar .ghost:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.vocab-toolbar .segmented {
+  background: transparent;
+  border-radius: 999px;
+  padding: 0;
+  box-shadow: none;
+}
+
+.vocab-toolbar-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--glass-border);
+  opacity: 0.6;
+}
+
+.action-fab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.action-fab-main {
+  padding: 6px 14px;
+  position: relative;
+  z-index: 1;
+}
+
+.action-fab-menu {
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(20, 21, 24, 0.9);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow);
+  transform: translate(-50%, 0) scale(0.85);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 2;
+  backdrop-filter: blur(10px);
+}
+
+.action-fab:hover .action-fab-menu,
+.action-fab:focus-within .action-fab-menu {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.action-fab-item {
+  white-space: nowrap;
+}
+
+.vocab-toolbar button:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.vocab-toolbar button:active,
+.vocab-toolbar button:focus-visible {
+  transform: none;
+  box-shadow: none;
+  outline: none;
+}
+
+.vocab-toolbar button:focus {
+  transform: none;
+  box-shadow: none;
+  outline: none;
+}
+
+.toolbar-star-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  transition: none;
+  box-shadow: none;
+  outline: none;
+  white-space: nowrap;
+}
+
+.toolbar-star-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.toolbar-star-toggle:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.toolbar-star-toggle.active {
+  color: #facc15;
+  background: rgba(250, 204, 21, 0.12);
+}
+
+@media (max-width: 720px) {
+  .vocab-toolbar-divider {
+    display: none;
+  }
 }
 
 .language-add {
@@ -1505,6 +1694,10 @@ body {
   min-height: 70vh;
 }
 
+.chat-shell.vocab-shell {
+  grid-template-rows: auto auto auto 1fr;
+}
+
 .chat-header {
   display: flex;
   align-items: center;
@@ -1538,6 +1731,12 @@ body {
   border-radius: 16px;
   border: 1px solid var(--border);
   background: rgba(18, 19, 22, 0.8);
+}
+
+.task-banner.vocab-banner {
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 
 .task-label {

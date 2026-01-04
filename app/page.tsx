@@ -130,6 +130,7 @@ export default function Home() {
   const [showStarredOnly, setShowStarredOnly] = useState<boolean>(false);
   const [showStudyStarredOnly, setShowStudyStarredOnly] = useState<boolean>(false);
   const [showScenarioStarredOnly, setShowScenarioStarredOnly] = useState<boolean>(false);
+  const [holdDeleteId, setHoldDeleteId] = useState<string | null>(null);
 
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -141,6 +142,8 @@ export default function Home() {
   const taskRef = useRef<string>("");
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef<boolean>(false);
+  const archiveTimerRef = useRef<number | null>(null);
+  const archiveTriggeredRef = useRef<boolean>(false);
 
   const clientCache = useMemo(() => new Map<string, string>(), []);
 
@@ -1210,6 +1213,40 @@ export default function Home() {
     setLongPressActive(false);
   }
 
+  function startArchiveHold(id: string, onHold: () => void) {
+    if (archiveTimerRef.current !== null) {
+      window.clearTimeout(archiveTimerRef.current);
+    }
+    archiveTriggeredRef.current = false;
+    setHoldDeleteId(id);
+    archiveTimerRef.current = window.setTimeout(() => {
+      archiveTriggeredRef.current = true;
+      onHold();
+      setHoldDeleteId(null);
+    }, 2000);
+  }
+
+  function endArchiveHold(id: string, onTap: () => void) {
+    if (holdDeleteId !== id) return;
+    if (archiveTimerRef.current !== null) {
+      window.clearTimeout(archiveTimerRef.current);
+    }
+    if (!archiveTriggeredRef.current) {
+      onTap();
+    }
+    archiveTriggeredRef.current = false;
+    setHoldDeleteId(null);
+  }
+
+  function cancelArchiveHold(id: string) {
+    if (holdDeleteId !== id) return;
+    if (archiveTimerRef.current !== null) {
+      window.clearTimeout(archiveTimerRef.current);
+    }
+    archiveTriggeredRef.current = false;
+    setHoldDeleteId(null);
+  }
+
   function handleSendClick() {
     if (longPressTriggeredRef.current) {
       longPressTriggeredRef.current = false;
@@ -1501,6 +1538,25 @@ export default function Home() {
     }
   }
 
+  async function archiveVocabEntry(key: string) {
+    if (!authUser || !language) return;
+    const target = vocabEntries.find((entry) => entry.key === key);
+    if (!target) return;
+    setVocabEntries((prev) => prev.filter((entry) => entry.key !== key));
+    setFlippedCards((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    await supabase
+      .from("user_vocab")
+      .update({ archived: true })
+      .eq("user_id", authUser.id)
+      .eq("language", language)
+      .eq("scope", "chat")
+      .eq("word_key", key);
+  }
+
   function toggleVocabStar(key: string) {
     const target = vocabEntries.find((entry) => entry.key === key);
     setVocabEntries((prev) =>
@@ -1660,6 +1716,33 @@ export default function Home() {
     }
   }
 
+  async function archiveStudyEntry(index: number) {
+    if (!authUser || !language || !studyPack) return;
+    const target = studyPack.entries[index];
+    if (!target) return;
+    setStudyPack((prev) => {
+      if (!prev) return prev;
+      const next = prev.entries.filter((_, i) => i !== index);
+      return { ...prev, entries: next };
+    });
+    setStudyFlipped((prev) => {
+      const next: Record<number, boolean> = {};
+      Object.keys(prev).forEach((key) => {
+        const idx = Number(key);
+        if (Number.isNaN(idx) || idx === index) return;
+        next[idx > index ? idx - 1 : idx] = prev[idx];
+      });
+      return next;
+    });
+    await supabase
+      .from("user_vocab")
+      .update({ archived: true })
+      .eq("user_id", authUser.id)
+      .eq("language", language)
+      .eq("scope", "common")
+      .eq("word_key", normalizeWord(target.word));
+  }
+
   function toggleScenarioStar(index: number, scenarioId: string) {
     const target = scenarioVocabMap[scenarioId]?.entries[index];
     setScenarioVocabMap((prev) => {
@@ -1710,6 +1793,36 @@ export default function Home() {
     }
   }
 
+  async function archiveScenarioEntry(index: number) {
+    if (!authUser || !language || !activeScenarioVocab) return;
+    const scenarioId = activeScenarioVocab.id;
+    const target = scenarioVocabMap[scenarioId]?.entries[index];
+    if (!target) return;
+    setScenarioVocabMap((prev) => {
+      const current = prev[scenarioId];
+      if (!current) return prev;
+      const nextEntries = current.entries.filter((_, i) => i !== index);
+      return { ...prev, [scenarioId]: { ...current, entries: nextEntries } };
+    });
+    setScenarioVocabFlipped((prev) => {
+      const next: Record<number, boolean> = {};
+      Object.keys(prev).forEach((key) => {
+        const idx = Number(key);
+        if (Number.isNaN(idx) || idx === index) return;
+        next[idx > index ? idx - 1 : idx] = prev[idx];
+      });
+      return next;
+    });
+    await supabase
+      .from("user_vocab")
+      .update({ archived: true })
+      .eq("user_id", authUser.id)
+      .eq("language", language)
+      .eq("scope", "scenario")
+      .eq("scenario_id", scenarioId)
+      .eq("word_key", normalizeWord(target.word));
+  }
+
   function createTopicVocab(topic: string) {
     const trimmed = topic.trim();
     if (!trimmed) return;
@@ -1747,6 +1860,35 @@ export default function Home() {
     if (target) {
       void deleteUserVocab("topic", normalizeWord(target.word), activeTopic);
     }
+  }
+
+  async function archiveTopicEntry(index: number) {
+    if (!authUser || !language || !activeTopic) return;
+    const target = topicVocabMap[activeTopic]?.entries[index];
+    if (!target) return;
+    setTopicVocabMap((prev) => {
+      const current = prev[activeTopic];
+      if (!current) return prev;
+      const nextEntries = current.entries.filter((_, i) => i !== index);
+      return { ...prev, [activeTopic]: { ...current, entries: nextEntries } };
+    });
+    setTopicVocabFlipped((prev) => {
+      const next: Record<number, boolean> = {};
+      Object.keys(prev).forEach((key) => {
+        const idx = Number(key);
+        if (Number.isNaN(idx) || idx === index) return;
+        next[idx > index ? idx - 1 : idx] = prev[idx];
+      });
+      return next;
+    });
+    await supabase
+      .from("user_vocab")
+      .update({ archived: true })
+      .eq("user_id", authUser.id)
+      .eq("language", language)
+      .eq("scope", "topic")
+      .eq("scenario_id", activeTopic)
+      .eq("word_key", normalizeWord(target.word));
   }
 
   function toggleTopicStar(index: number) {
@@ -1933,6 +2075,8 @@ export default function Home() {
     return Object.keys(topicVocabMap).sort((a, b) => a.localeCompare(b));
   }, [topicVocabMap]);
 
+  const targetLabel = language || "Target";
+
   const filteredVocab = useMemo(() => {
     if (!showStarredOnly) return sortedVocab;
     return sortedVocab.filter((entry) => entry.starred);
@@ -1975,88 +2119,95 @@ export default function Home() {
   );
 
   const commonWordsView = (
-    <section className="chat-shell">
-      <div className="chat-header">
-        <button type="button" className="ghost" onClick={() => setView("dashboard")}>
+    <section className="chat-shell vocab-shell">
+      <div className="subtle-back">
+        <button type="button" className="ghost subtle-back-btn" onClick={() => setView("dashboard")}>
           Back
         </button>
-        <div className="chat-title">
-          <div className="chat-title-main">Common words</div>
-          <div className="chat-title-sub">Build a foundation of everyday vocabulary.</div>
-        </div>
       </div>
-      <div className="task-banner">
-        <div className="task-label">Study list</div>
-        <div className="task-text">
-          {studyPack?.entries.length ? `${studyPack.entries.length} words ready` : "Generate a list to begin."}
-        </div>
-        <div className="home-vocab-actions">
+      <div className="vocab-tabs">
+        <button
+          type="button"
+          className={`vocab-tab-btn ${studyMode === "list" ? "active" : ""}`}
+          onClick={() => setStudyMode("list")}
+        >
+          List
+        </button>
+        <button
+          type="button"
+          className={`vocab-tab-btn ${studyMode === "cards" ? "active" : ""}`}
+          onClick={() => setStudyMode("cards")}
+        >
+          Flashcards
+        </button>
+      </div>
+      <div className="task-banner vocab-banner">
+        <div className="vocab-toolbar">
           <button
             type="button"
             className="ghost"
-            onClick={() => generateStudyWords(30)}
-            disabled={!language || studyLoading}
+            onClick={() => {
+              setStudyFront((prev) => (prev === "word" ? "translation" : "word"));
+              setStudyFlipped({});
+            }}
           >
-            {studyLoading ? "Generating" : "Generate 30"}
+            Start: {studyFront === "word" ? targetLabel : "English"}
           </button>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => generateStudyWords(10)}
-            disabled={!language || studyLoading}
-          >
-            {studyLoading ? "Generating" : "Generate 10 more"}
-          </button>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => generateStudyWords(10, "advanced")}
-            disabled={!language || studyLoading}
-          >
-            {studyLoading ? "Generating" : "Important harder words"}
-          </button>
+          <div className="vocab-toolbar-divider" />
+          <div className="action-fab" aria-label="Generate words">
+            <button type="button" className="ghost action-fab-main">
+              Generate
+            </button>
+            <div className="action-fab-menu">
+              <button
+                type="button"
+                className="ghost action-fab-item"
+                onClick={() => generateStudyWords(30)}
+                disabled={!language || studyLoading}
+              >
+                {studyLoading ? "Generating" : "Generate 30"}
+              </button>
+              <button
+                type="button"
+                className="ghost action-fab-item"
+                onClick={() => generateStudyWords(10)}
+                disabled={!language || studyLoading}
+              >
+                {studyLoading ? "Generating" : "Generate 10 more"}
+              </button>
+              <button
+                type="button"
+                className="ghost action-fab-item"
+                onClick={() => generateStudyWords(10, "advanced")}
+                disabled={!language || studyLoading}
+              >
+                {studyLoading ? "Generating" : "Important harder words"}
+              </button>
+            </div>
+          </div>
           <button type="button" className="ghost" onClick={() => void archiveCommonUnstarred()}>
             Archive all but starred
           </button>
           <button type="button" className="ghost" onClick={clearStudy}>
             Clear
           </button>
-        </div>
-      </div>
-      <div className="home-vocab-controls">
-        <div className="segmented">
           <button
             type="button"
-            className={`segmented-btn ${studyMode === "list" ? "active" : ""}`}
-            onClick={() => setStudyMode("list")}
+            className={`toolbar-star-toggle ${showStudyStarredOnly ? "active" : ""}`}
+            onClick={() => setShowStudyStarredOnly((prev) => !prev)}
+            aria-label={showStudyStarredOnly ? "Show all words" : "Show starred only"}
+            aria-pressed={showStudyStarredOnly}
+            title={showStudyStarredOnly ? "Show all" : "Show starred only"}
           >
-            List
-          </button>
-          <button
-            type="button"
-            className={`segmented-btn ${studyMode === "cards" ? "active" : ""}`}
-            onClick={() => setStudyMode("cards")}
-          >
-            Flashcards
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
+                fill="currentColor"
+              />
+            </svg>
+            <span>Starred</span>
           </button>
         </div>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => {
-            setStudyFront((prev) => (prev === "word" ? "translation" : "word"));
-            setStudyFlipped({});
-          }}
-        >
-          Start: {studyFront === "word" ? "Target" : "English"}
-        </button>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => setShowStudyStarredOnly((prev) => !prev)}
-        >
-          {showStudyStarredOnly ? "Show all" : "Starred only"}
-        </button>
       </div>
       {!language ? (
         <p className="dashboard-alert">Set a language above to generate vocabulary.</p>
@@ -2092,6 +2243,7 @@ export default function Home() {
                     const frontText = studyFront === "word" ? entry.word : entry.translation;
                     const backText = studyFront === "word" ? entry.translation : entry.word;
                     const key = exampleKey("common", entry.word);
+                    const holdId = `common-${index}`;
                     // examples are shown in a modal
                     return (
                       <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
@@ -2136,25 +2288,40 @@ export default function Home() {
                             >
                               Ex
                             </button>
-                            <button
-                              type="button"
-                              className="vocab-card-icon"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                deleteStudyEntry(index);
-                              }}
-                              aria-label="Delete"
-                            >
-                              <svg viewBox="0 0 24 24" aria-hidden="true">
-                                <path
-                                  d="M6 6l12 12M18 6L6 18"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                />
-                              </svg>
-                            </button>
+                      <button
+                        type="button"
+                        className={`vocab-card-icon ${holdDeleteId === holdId ? "holding" : ""}`}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          if (event.button !== 0) return;
+                          startArchiveHold(holdId, () => deleteStudyEntry(index));
+                        }}
+                        onPointerUp={(event) => {
+                          event.stopPropagation();
+                          if (event.button !== 0) return;
+                          endArchiveHold(holdId, () => void archiveStudyEntry(index));
+                        }}
+                        onPointerLeave={(event) => {
+                          event.stopPropagation();
+                          cancelArchiveHold(holdId);
+                        }}
+                        onPointerCancel={(event) => {
+                          event.stopPropagation();
+                          cancelArchiveHold(holdId);
+                        }}
+                        aria-label="Archive (hold to delete)"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M4 7h16M6 7v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 7V5h6v2M9.5 12h5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
                           </div>
                           <div className="vocab-card-face">
                             <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
@@ -2216,7 +2383,7 @@ export default function Home() {
   );
 
   const scenarioDetailView = activeScenarioVocab ? (
-    <section className="chat-shell">
+    <section className="chat-shell vocab-shell">
       <div className="chat-header">
         <button type="button" className="ghost" onClick={() => setView("scenario-vocab")}>
           Back
@@ -2226,7 +2393,7 @@ export default function Home() {
           <div className="chat-title-sub">{activeScenarioVocab.subtitle}</div>
         </div>
       </div>
-      <div className="task-banner">
+      <div className="task-banner vocab-banner">
         <div className="task-label">Scenario words</div>
         <div className="task-text">
           {scenarioVocabMap[activeScenarioVocab.id]?.entries.length
@@ -2287,7 +2454,7 @@ export default function Home() {
             setScenarioVocabFlipped({});
           }}
         >
-          Start: {scenarioVocabFront === "word" ? "Target" : "English"}
+          Start: {scenarioVocabFront === "word" ? targetLabel : "English"}
         </button>
         <button
           type="button"
@@ -2338,6 +2505,7 @@ export default function Home() {
               const frontText = scenarioVocabFront === "word" ? entry.word : entry.translation;
               const backText = scenarioVocabFront === "word" ? entry.translation : entry.word;
               const key = exampleKey("scenario", entry.word, activeScenarioVocab.id);
+              const holdId = `scenario-${activeScenarioVocab.id}-${index}`;
               // examples are shown in a modal
               return (
                 <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
@@ -2384,20 +2552,35 @@ export default function Home() {
                       </button>
                       <button
                         type="button"
-                        className="vocab-card-icon"
-                        onClick={(event) => {
+                        className={`vocab-card-icon ${holdDeleteId === holdId ? "holding" : ""}`}
+                        onPointerDown={(event) => {
                           event.stopPropagation();
-                          deleteScenarioEntry(index);
+                          if (event.button !== 0) return;
+                          startArchiveHold(holdId, () => deleteScenarioEntry(index));
                         }}
-                        aria-label="Delete"
+                        onPointerUp={(event) => {
+                          event.stopPropagation();
+                          if (event.button !== 0) return;
+                          endArchiveHold(holdId, () => void archiveScenarioEntry(index));
+                        }}
+                        onPointerLeave={(event) => {
+                          event.stopPropagation();
+                          cancelArchiveHold(holdId);
+                        }}
+                        onPointerCancel={(event) => {
+                          event.stopPropagation();
+                          cancelArchiveHold(holdId);
+                        }}
+                        aria-label="Archive (hold to delete)"
                       >
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                           <path
-                            d="M6 6l12 12M18 6L6 18"
+                            d="M4 7h16M6 7v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 7V5h6v2M9.5 12h5"
                             fill="none"
                             stroke="currentColor"
                             strokeWidth="2"
                             strokeLinecap="round"
+                            strokeLinejoin="round"
                           />
                         </svg>
                       </button>
@@ -2424,7 +2607,7 @@ export default function Home() {
   ) : null;
 
   const topicDetailView = activeTopic ? (
-    <section className="chat-shell">
+    <section className="chat-shell vocab-shell">
       <div className="chat-header">
         <button type="button" className="ghost" onClick={() => setView("dashboard")}>
           Back
@@ -2434,7 +2617,7 @@ export default function Home() {
           <div className="chat-title-sub">Custom topic words.</div>
         </div>
       </div>
-      <div className="task-banner">
+      <div className="task-banner vocab-banner">
         <div className="task-label">Topic list</div>
         <div className="task-text">
           {topicVocabMap[activeTopic]?.entries.length
@@ -2495,7 +2678,7 @@ export default function Home() {
             setTopicVocabFlipped({});
           }}
         >
-          Start: {topicVocabFront === "word" ? "Target" : "English"}
+          Start: {topicVocabFront === "word" ? targetLabel : "English"}
         </button>
         <button
           type="button"
@@ -2587,19 +2770,32 @@ export default function Home() {
                       <button
                         type="button"
                         className="vocab-card-icon"
-                        onClick={(event) => {
+                        onPointerDown={(event) => {
                           event.stopPropagation();
-                          deleteTopicEntry(index);
+                          startArchiveHold(() => deleteTopicEntry(index));
                         }}
-                        aria-label="Delete"
+                        onPointerUp={(event) => {
+                          event.stopPropagation();
+                          endArchiveHold(() => void archiveTopicEntry(index));
+                        }}
+                        onPointerLeave={(event) => {
+                          event.stopPropagation();
+                          endArchiveHold(() => void archiveTopicEntry(index));
+                        }}
+                        onPointerCancel={(event) => {
+                          event.stopPropagation();
+                          endArchiveHold(() => void archiveTopicEntry(index));
+                        }}
+                        aria-label="Archive (hold to delete)"
                       >
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                           <path
-                            d="M6 6l12 12M18 6L6 18"
+                            d="M4 7h16M6 7v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 7V5h6v2M9.5 12h5"
                             fill="none"
                             stroke="currentColor"
                             strokeWidth="2"
                             strokeLinecap="round"
+                            strokeLinejoin="round"
                           />
                         </svg>
                       </button>
@@ -3147,7 +3343,7 @@ export default function Home() {
                     setFlippedCards({});
                   }}
                 >
-                  Start: {vocabFront === "word" ? "Target" : "English"}
+                  Start: {vocabFront === "word" ? targetLabel : "English"}
                 </button>
                 <button
                   type="button"
@@ -3161,7 +3357,7 @@ export default function Home() {
                   className="ghost vocab-tab"
                   onClick={() => void archiveChatUnstarred()}
                 >
-                  Archive all but starred
+                  Archive unstarred
                 </button>
                 <button type="button" className="ghost vocab-clear" onClick={clearVocab}>
                   Clear
@@ -3243,19 +3439,32 @@ export default function Home() {
                               <button
                                 type="button"
                                 className="vocab-card-icon"
-                                onClick={(event) => {
+                                onPointerDown={(event) => {
                                   event.stopPropagation();
-                                  deleteVocabEntry(entry.key);
+                                  startArchiveHold(() => deleteVocabEntry(entry.key));
                                 }}
-                                aria-label="Delete"
+                                onPointerUp={(event) => {
+                                  event.stopPropagation();
+                                  endArchiveHold(() => void archiveVocabEntry(entry.key));
+                                }}
+                                onPointerLeave={(event) => {
+                                  event.stopPropagation();
+                                  endArchiveHold(() => void archiveVocabEntry(entry.key));
+                                }}
+                                onPointerCancel={(event) => {
+                                  event.stopPropagation();
+                                  endArchiveHold(() => void archiveVocabEntry(entry.key));
+                                }}
+                                aria-label="Archive (hold to delete)"
                               >
                                 <svg viewBox="0 0 24 24" aria-hidden="true">
                                   <path
-                                    d="M6 6l12 12M18 6L6 18"
+                                    d="M4 7h16M6 7v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 7V5h6v2M9.5 12h5"
                                     fill="none"
                                     stroke="currentColor"
                                     strokeWidth="2"
                                     strokeLinecap="round"
+                                    strokeLinejoin="round"
                                   />
                                 </svg>
                               </button>
