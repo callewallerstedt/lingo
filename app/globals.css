@@ -619,7 +619,8 @@ textarea:focus {
 .vocab-cards {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 160px));
+  justify-content: start;
 }
 
 .vocab-card {
@@ -647,18 +648,20 @@ textarea:focus {
 .vocab-card-actions {
   position: absolute;
   top: 10px;
+  left: 10px;
   right: 10px;
   display: flex;
   gap: 6px;
+  justify-content: space-between;
   z-index: 1;
 }
 
 .vocab-card-icon {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 999px;
-  border: 1px solid var(--glass-border);
-  background: rgba(255, 255, 255, 0.06);
+  border: none;
+  background: transparent;
   color: var(--ink);
   padding: 0;
   font-size: 12px;
@@ -667,8 +670,8 @@ textarea:focus {
 }
 
 .vocab-card-icon svg {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
 }
 
 .vocab-examples {
