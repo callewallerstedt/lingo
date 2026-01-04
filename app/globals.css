@@ -714,7 +714,8 @@ textarea:focus {
 }
 
 .vocab-card-icon.active {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(250, 204, 21, 0.22);
+  color: #facc15;
 }
 
 .vocab-card-word {
@@ -753,6 +754,9 @@ textarea:focus {
 .vocab-card.flipped {
   border-color: var(--accent);
   border-width: 2px;
+  border-style: solid;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
   background: rgba(107, 114, 128, 0.08);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
 }
