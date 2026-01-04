@@ -680,6 +680,20 @@ textarea:focus {
   padding: 8px 10px;
 }
 
+.vocab-examples-list {
+  display: grid;
+  gap: 8px;
+}
+
+.vocab-example-line {
+  font-size: 13px;
+  color: var(--ink);
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+}
+
 .vocab-examples ul {
   margin: 6px 0 0;
   padding-left: 16px;

@@ -2,8 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { callOpenAI } from "../../lib/openai";
 
 type ExamplePayload = {
-  sentences: string[];
-  forms: string[];
+  lines: string[];
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -30,8 +29,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             "Generate example sentences for a single vocabulary word.",
             "Use the target language for all sentences.",
             "Provide 3 to 4 short, natural sentences using the word in different forms or roles.",
-            "Also provide a short list of the forms used (e.g., plural, past, polite form).",
-            "Return only JSON: {\"sentences\": [\"...\"], \"forms\": [\"...\"]}",
+            "Format each line as: form: sentence",
+            "Return only JSON: {\"lines\": [\"form: sentence\", \"form2: sentence\"]}",
           ].join(" "),
         },
       ],
@@ -64,9 +63,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    const sentences = Array.isArray(parsed?.sentences) ? parsed?.sentences : [];
-    const forms = Array.isArray(parsed?.forms) ? parsed?.forms : [];
-    res.json({ sentences, forms });
+    const lines = Array.isArray(parsed?.lines) ? parsed?.lines : [];
+    res.json({ lines });
   } catch (err) {
     res.status(500).json({ error: "Failed to generate examples" });
   }

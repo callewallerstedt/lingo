@@ -101,8 +101,9 @@ export default function Home() {
   const [studyFront, setStudyFront] = useState<"word" | "translation">("word");
   const [studyFlipped, setStudyFlipped] = useState<Record<number, boolean>>({});
   const [studyLoading, setStudyLoading] = useState<boolean>(false);
-  const [exampleMap, setExampleMap] = useState<Record<string, { sentences: string[]; forms: string[] }>>({});
+  const [exampleMap, setExampleMap] = useState<Record<string, string[]>>({});
   const [exampleLoading, setExampleLoading] = useState<Record<string, boolean>>({});
+  const [exampleModal, setExampleModal] = useState<{ word: string; lines: string[] } | null>(null);
   const [scenarioVocabMap, setScenarioVocabMap] = useState<Record<string, StudyPack>>({});
   const [scenarioVocabMode, setScenarioVocabMode] = useState<"list" | "cards">("list");
   const [scenarioVocabFront, setScenarioVocabFront] = useState<"word" | "translation">("word");
@@ -1320,8 +1321,14 @@ export default function Home() {
   async function generateExamples(scope: "chat" | "common" | "scenario", word: string, scenarioId?: string | null) {
     if (!language) return;
     const key = exampleKey(scope, word, scenarioId);
+    const cached = exampleMap[key];
+    if (cached && cached.length) {
+      setExampleModal({ word, lines: cached });
+      return;
+    }
     if (exampleLoading[key]) return;
     setExampleLoading((prev) => ({ ...prev, [key]: true }));
+    setExampleModal({ word, lines: [] });
     try {
       const res = await fetch("/api/examples", {
         method: "POST",
@@ -1329,10 +1336,12 @@ export default function Home() {
         body: JSON.stringify({ language, word }),
       });
       if (!res.ok) return;
-      const data = (await res.json()) as { sentences?: string[]; forms?: string[] };
-      const sentences = Array.isArray(data.sentences) ? data.sentences : [];
-      const forms = Array.isArray(data.forms) ? data.forms : [];
-      setExampleMap((prev) => ({ ...prev, [key]: { sentences, forms } }));
+      const data = (await res.json()) as { lines?: string[] };
+      const lines = Array.isArray(data.lines) ? data.lines : [];
+      setExampleMap((prev) => ({ ...prev, [key]: lines }));
+      if (lines.length) {
+        setExampleModal({ word, lines });
+      }
     } finally {
       setExampleLoading((prev) => ({ ...prev, [key]: false }));
     }
@@ -1654,7 +1663,7 @@ export default function Home() {
                     const frontText = studyFront === "word" ? entry.word : entry.translation;
                     const backText = studyFront === "word" ? entry.translation : entry.word;
                     const key = exampleKey("common", entry.word);
-                    const examples = exampleMap[key];
+                    // examples are shown in a modal
                     return (
                       <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
                         <div
@@ -1727,22 +1736,7 @@ export default function Home() {
                             </div>
                           </div>
                         </div>
-                        {exampleLoading[key] ? (
-                          <div className="vocab-examples">Generating examples...</div>
-                        ) : examples ? (
-                          <div className="vocab-examples">
-                            {examples.forms?.length ? (
-                              <div className="vocab-examples-forms">
-                                Forms: {examples.forms.join(", ")}
-                              </div>
-                            ) : null}
-                            <ul>
-                              {examples.sentences.map((sentence, sentenceIndex) => (
-                                <li key={`${key}-${sentenceIndex}`}>{sentence}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        ) : null}
+                        
                       </div>
                     );
                   })}
@@ -1906,7 +1900,7 @@ export default function Home() {
               const frontText = scenarioVocabFront === "word" ? entry.word : entry.translation;
               const backText = scenarioVocabFront === "word" ? entry.translation : entry.word;
               const key = exampleKey("scenario", entry.word, activeScenarioVocab.id);
-              const examples = exampleMap[key];
+              // examples are shown in a modal
               return (
                 <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
                   <div
@@ -1979,22 +1973,7 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
-                  {exampleLoading[key] ? (
-                    <div className="vocab-examples">Generating examples...</div>
-                  ) : examples ? (
-                    <div className="vocab-examples">
-                      {examples.forms?.length ? (
-                        <div className="vocab-examples-forms">
-                          Forms: {examples.forms.join(", ")}
-                        </div>
-                      ) : null}
-                      <ul>
-                        {examples.sentences.map((sentence, sentenceIndex) => (
-                          <li key={`${key}-${sentenceIndex}`}>{sentence}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
+                  
                 </div>
               );
             })}
@@ -2356,6 +2335,32 @@ export default function Home() {
         </div>
       ) : null}
 
+      {exampleModal ? (
+        <div className="vocab-modal-overlay" onClick={() => setExampleModal(null)}>
+          <div className="vocab-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="vocab-modal-header">
+              <div className="vocab-title">Examples for {exampleModal.word}</div>
+              <button type="button" className="ghost vocab-clear" onClick={() => setExampleModal(null)}>
+                Close
+              </button>
+            </div>
+            <div className="vocab-modal-body">
+              {exampleModal.lines.length ? (
+                <div className="vocab-examples-list">
+                  {exampleModal.lines.map((line, index) => (
+                    <div key={`${exampleModal.word}-${index}`} className="vocab-example-line">
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="vocab-examples">Generating examples...</div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {showVocabModal ? (
         <div className="vocab-modal-overlay" onClick={() => setShowVocabModal(false)}>
           <div className="vocab-modal" onClick={(event) => event.stopPropagation()}>
@@ -2426,7 +2431,7 @@ export default function Home() {
                       const frontText = vocabFront === "word" ? entry.word : entry.translation;
                       const backText = vocabFront === "word" ? entry.translation : entry.word;
                       const key = exampleKey("chat", entry.word);
-                      const examples = exampleMap[key];
+                      // examples are shown in a modal
                       return (
                         <div key={entry.key} className="vocab-card-wrap">
                           <div
@@ -2499,22 +2504,7 @@ export default function Home() {
                               </div>
                             </div>
                           </div>
-                          {exampleLoading[key] ? (
-                            <div className="vocab-examples">Generating examples...</div>
-                          ) : examples ? (
-                            <div className="vocab-examples">
-                              {examples.forms?.length ? (
-                                <div className="vocab-examples-forms">
-                                  Forms: {examples.forms.join(", ")}
-                                </div>
-                              ) : null}
-                              <ul>
-                                {examples.sentences.map((sentence, sentenceIndex) => (
-                                  <li key={`${key}-${sentenceIndex}`}>{sentence}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          ) : null}
+                          
                         </div>
                       );
                     })}
