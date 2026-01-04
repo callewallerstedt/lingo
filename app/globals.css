@@ -1483,6 +1483,13 @@ body {
   opacity: 0.6;
 }
 
+.toolbar-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .action-fab {
   position: relative;
   display: inline-flex;
@@ -1548,7 +1555,6 @@ body {
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  margin-left: auto;
   background: transparent;
   border: none;
   border-radius: 999px;
@@ -1574,6 +1580,38 @@ body {
 .toolbar-star-toggle.active {
   color: #facc15;
   background: rgba(250, 204, 21, 0.12);
+}
+
+.toolbar-archive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  transition: none;
+  box-shadow: none;
+  outline: none;
+  white-space: nowrap;
+}
+
+.toolbar-archive-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.toolbar-archive-toggle:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.toolbar-archive-toggle.active {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 @media (max-width: 720px) {

@@ -36,12 +36,14 @@ type VocabEntry = {
   count: number;
   lastClicked: number;
   starred?: boolean;
+  archived?: boolean;
 };
 
 type StudyEntry = {
   word: string;
   translation: string;
   starred?: boolean;
+  archived?: boolean;
 };
 
 type StudyPack = {
@@ -129,6 +131,7 @@ export default function Home() {
   const [activeScenarioVocab, setActiveScenarioVocab] = useState<ScenarioDefinition | null>(null);
   const [showStarredOnly, setShowStarredOnly] = useState<boolean>(false);
   const [showStudyStarredOnly, setShowStudyStarredOnly] = useState<boolean>(false);
+  const [showStudyArchivedOnly, setShowStudyArchivedOnly] = useState<boolean>(false);
   const [showScenarioStarredOnly, setShowScenarioStarredOnly] = useState<boolean>(false);
   const [holdDeleteId, setHoldDeleteId] = useState<string | null>(null);
 
@@ -286,7 +289,12 @@ export default function Home() {
           const filtered: Record<string, StudyPack> = {};
           Object.entries(parsed).forEach(([key, value]) => {
             if (value?.language === language) {
-              filtered[key] = value;
+              const mergedEntries = mergeUniqueEntries([], value.entries || []).merged;
+              filtered[key] = {
+                ...value,
+                entries: mergedEntries,
+                archived: mergedEntries.length ? mergedEntries.every((entry) => entry.archived) : false,
+              };
             }
           });
           setScenarioVocabMap(filtered);
@@ -307,7 +315,10 @@ export default function Home() {
         const filtered: Record<string, StudyPack> = {};
         Object.entries(parsed).forEach(([key, value]) => {
           if (value?.language === language) {
-            filtered[key] = value;
+            filtered[key] = {
+              ...value,
+              entries: mergeUniqueEntries([], value.entries || []).merged,
+            };
           }
         });
         setTopicVocabMap(filtered);
@@ -555,6 +566,7 @@ export default function Home() {
           count: row.count || 1,
           lastClicked: row.last_clicked ? Date.parse(row.last_clicked) : Date.now(),
           starred: Boolean(row.starred),
+          archived: Boolean(row.archived),
         });
         return;
       }
@@ -562,15 +574,15 @@ export default function Home() {
         word: row.word,
         translation: row.translation,
         starred: Boolean(row.starred),
+        archived: Boolean(row.archived),
       };
       if (row.scope === "common") {
         commonEntries.push(entry);
       } else if (row.scope === "scenario" && row.scenario_id) {
         if (!scenarioMap[row.scenario_id]) {
-          scenarioMap[row.scenario_id] = { language: activeLanguage, entries: [], archived: isArchived };
+          scenarioMap[row.scenario_id] = { language: activeLanguage, entries: [], archived: false };
         }
         scenarioMap[row.scenario_id].entries.push(entry);
-        scenarioMap[row.scenario_id].archived = isArchived;
       } else if (row.scope === "topic" && row.scenario_id) {
         if (!topicMap[row.scenario_id]) {
           topicMap[row.scenario_id] = { language: activeLanguage, entries: [] };
@@ -580,13 +592,31 @@ export default function Home() {
     });
 
     setVocabEntries(chatEntries);
-    if (commonEntries.length) {
-      setStudyPack({ language: activeLanguage, entries: commonEntries });
+    const dedupedCommon = mergeUniqueEntries([], commonEntries).merged;
+    if (dedupedCommon.length) {
+      setStudyPack({ language: activeLanguage, entries: dedupedCommon });
     } else {
       setStudyPack(null);
     }
-    setScenarioVocabMap(scenarioMap);
-    setTopicVocabMap(topicMap);
+    const dedupedScenarioMap: Record<string, StudyPack> = {};
+    Object.entries(scenarioMap).forEach(([key, pack]) => {
+      dedupedScenarioMap[key] = {
+        ...pack,
+        entries: mergeUniqueEntries([], pack.entries).merged,
+      };
+    });
+    Object.values(dedupedScenarioMap).forEach((pack) => {
+      pack.archived = pack.entries.length ? pack.entries.every((entry) => entry.archived) : false;
+    });
+    setScenarioVocabMap(dedupedScenarioMap);
+    const dedupedTopicMap: Record<string, StudyPack> = {};
+    Object.entries(topicMap).forEach(([key, pack]) => {
+      dedupedTopicMap[key] = {
+        ...pack,
+        entries: mergeUniqueEntries([], pack.entries).merged,
+      };
+    });
+    setTopicVocabMap(dedupedTopicMap);
   }
 
   async function upsertUserVocab(rows: Array<{
@@ -668,6 +698,7 @@ export default function Home() {
       ...prev,
       [scenarioId]: {
         ...(prev[scenarioId] || { language, entries: [] }),
+        entries: (prev[scenarioId]?.entries || []).map((entry) => ({ ...entry, archived: true })),
         archived: true,
       },
     }));
@@ -686,7 +717,7 @@ export default function Home() {
     if (keys.length) {
       await supabase
         .from("user_vocab")
-        .delete()
+        .update({ archived: true })
         .eq("user_id", authUser.id)
         .eq("language", language)
         .eq("scope", "scenario")
@@ -697,8 +728,11 @@ export default function Home() {
       ...prev,
       [scenarioId]: {
         language,
-        entries: remaining,
-        archived: true,
+        entries: entries.map((entry) => ({
+          ...entry,
+          archived: entry.starred ? entry.archived : true,
+        })),
+        archived: remaining.length === 0,
       },
     }));
   }
@@ -711,13 +745,19 @@ export default function Home() {
     if (keys.length) {
       await supabase
         .from("user_vocab")
-        .delete()
+        .update({ archived: true })
         .eq("user_id", authUser.id)
         .eq("language", language)
         .eq("scope", "common")
         .in("word_key", keys);
     }
-    setStudyPack({ language: studyPack.language, entries: remaining });
+    setStudyPack({
+      language: studyPack.language,
+      entries: studyPack.entries.map((entry) => ({
+        ...entry,
+        archived: entry.starred ? entry.archived : true,
+      })),
+    });
   }
 
   async function archiveChatUnstarred() {
@@ -728,13 +768,18 @@ export default function Home() {
     if (keys.length) {
       await supabase
         .from("user_vocab")
-        .delete()
+        .update({ archived: true })
         .eq("user_id", authUser.id)
         .eq("language", language)
         .eq("scope", "chat")
         .in("word_key", keys);
     }
-    setVocabEntries(remaining);
+    setVocabEntries((prev) =>
+      prev.map((entry) => ({
+        ...entry,
+        archived: entry.starred ? entry.archived : true,
+      }))
+    );
   }
 
   async function archiveTopicUnstarred(topic: string) {
@@ -747,7 +792,7 @@ export default function Home() {
     if (keys.length) {
       await supabase
         .from("user_vocab")
-        .delete()
+        .update({ archived: true })
         .eq("user_id", authUser.id)
         .eq("language", language)
         .eq("scope", "topic")
@@ -758,7 +803,10 @@ export default function Home() {
       ...prev,
       [topic]: {
         language: current.language,
-        entries: remaining,
+        entries: current.entries.map((entry) => ({
+          ...entry,
+          archived: entry.starred ? entry.archived : true,
+        })),
       },
     }));
     setTopicVocabFlipped({});
@@ -1404,13 +1452,14 @@ export default function Home() {
                 count: nextCount,
                 lastClicked: nextClicked,
                 starred: entry.starred,
+                archived: false,
               }
             : entry
         );
       }
       return [
         ...prev,
-        { key, word, translation, count: nextCount, lastClicked: nextClicked, starred: false },
+        { key, word, translation, count: nextCount, lastClicked: nextClicked, starred: false, archived: false },
       ];
     });
 
@@ -1424,6 +1473,7 @@ export default function Home() {
         starred: nextStar,
         count: nextCount,
         lastClicked: nextClicked,
+        archived: false,
       },
     ]);
   }
@@ -1441,12 +1491,19 @@ export default function Home() {
     if (scope === "common") {
       setStudyPack((prev) => {
         const entries = prev?.entries || [];
-        const exists = entries.some((entry) => normalizeWord(entry.word) === normalizeWord(word));
-        if (exists) return prev;
-        const nextEntries = [...entries, { word, translation, starred: false }];
+        const key = normalizeWord(word);
+        const index = entries.findIndex((entry) => normalizeWord(entry.word) === key);
+        if (index !== -1) {
+          const nextEntries = entries.map((entry, idx) =>
+            idx === index
+              ? { ...entry, translation: translation || entry.translation, archived: false }
+              : entry
+          );
+          return { language: language || "", entries: nextEntries };
+        }
+        const nextEntries = [...entries, { word, translation, starred: false, archived: false }];
         return { language: language || "", entries: nextEntries };
       });
-      const key = normalizeWord(word);
       if (key) {
         void upsertUserVocab([
           {
@@ -1458,6 +1515,7 @@ export default function Home() {
             starred: false,
             count: 1,
             lastClicked: Date.now(),
+            archived: false,
           },
         ]);
       }
@@ -1466,15 +1524,25 @@ export default function Home() {
     if (scope === "scenario" && scenarioId) {
       setScenarioVocabMap((prev) => {
         const current = prev[scenarioId]?.entries || [];
-        const exists = current.some((entry) => normalizeWord(entry.word) === normalizeWord(word));
-        if (exists) return prev;
-        const nextEntries = [...current, { word, translation, starred: false }];
+        const key = normalizeWord(word);
+        const index = current.findIndex((entry) => normalizeWord(entry.word) === key);
+        if (index !== -1) {
+          const nextEntries = current.map((entry, idx) =>
+            idx === index
+              ? { ...entry, translation: translation || entry.translation, archived: false }
+              : entry
+          );
+          return {
+            ...prev,
+            [scenarioId]: { language: language || "", entries: nextEntries, archived: false },
+          };
+        }
+        const nextEntries = [...current, { word, translation, starred: false, archived: false }];
         return {
           ...prev,
-          [scenarioId]: { language: language || "", entries: nextEntries },
+          [scenarioId]: { language: language || "", entries: nextEntries, archived: false },
         };
       });
-      const key = normalizeWord(word);
       if (key) {
         void upsertUserVocab([
           {
@@ -1486,6 +1554,7 @@ export default function Home() {
             starred: false,
             count: 1,
             lastClicked: Date.now(),
+            archived: false,
           },
         ]);
       }
@@ -1494,15 +1563,25 @@ export default function Home() {
     if (scope === "topic" && scenarioId) {
       setTopicVocabMap((prev) => {
         const current = prev[scenarioId]?.entries || [];
-        const exists = current.some((entry) => normalizeWord(entry.word) === normalizeWord(word));
-        if (exists) return prev;
-        const nextEntries = [...current, { word, translation, starred: false }];
+        const key = normalizeWord(word);
+        const index = current.findIndex((entry) => normalizeWord(entry.word) === key);
+        if (index !== -1) {
+          const nextEntries = current.map((entry, idx) =>
+            idx === index
+              ? { ...entry, translation: translation || entry.translation, archived: false }
+              : entry
+          );
+          return {
+            ...prev,
+            [scenarioId]: { language: language || "", entries: nextEntries },
+          };
+        }
+        const nextEntries = [...current, { word, translation, starred: false, archived: false }];
         return {
           ...prev,
           [scenarioId]: { language: language || "", entries: nextEntries },
         };
       });
-      const key = normalizeWord(word);
       if (key) {
         void upsertUserVocab([
           {
@@ -1514,6 +1593,7 @@ export default function Home() {
             starred: false,
             count: 1,
             lastClicked: Date.now(),
+            archived: false,
           },
         ]);
       }
@@ -1542,12 +1622,9 @@ export default function Home() {
     if (!authUser || !language) return;
     const target = vocabEntries.find((entry) => entry.key === key);
     if (!target) return;
-    setVocabEntries((prev) => prev.filter((entry) => entry.key !== key));
-    setFlippedCards((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
+    setVocabEntries((prev) =>
+      prev.map((entry) => (entry.key === key ? { ...entry, archived: true } : entry))
+    );
     await supabase
       .from("user_vocab")
       .update({ archived: true })
@@ -1575,6 +1652,7 @@ export default function Home() {
           starred: !target.starred,
           count: target.count,
           lastClicked: target.lastClicked,
+          archived: Boolean(target.archived),
         },
       ]);
     }
@@ -1606,6 +1684,7 @@ export default function Home() {
           starred: !target.starred,
           count: 1,
           lastClicked: Date.now(),
+          archived: Boolean(target.archived),
         },
       ]);
     }
@@ -1652,6 +1731,46 @@ export default function Home() {
       .toLocaleLowerCase()
       .normalize("NFKC")
       .replace(/[^\p{L}\p{M}\p{Nd}'-]/gu, "");
+  }
+
+  function mergeUniqueEntries(current: StudyEntry[], incoming: StudyEntry[]) {
+    const merged = current.map((entry) => ({
+      ...entry,
+      starred: Boolean(entry.starred),
+      archived: Boolean(entry.archived),
+    }));
+    const indexByKey = new Map<string, number>();
+    merged.forEach((entry, index) => {
+      const key = normalizeWord(entry.word);
+      if (key) {
+        indexByKey.set(key, index);
+      }
+    });
+    const added: StudyEntry[] = [];
+    incoming.forEach((entry) => {
+      const key = normalizeWord(entry.word);
+      if (!key) return;
+      const existingIndex = indexByKey.get(key);
+      if (existingIndex === undefined) {
+        const next = {
+          ...entry,
+          starred: Boolean(entry.starred),
+          archived: Boolean(entry.archived),
+        };
+        indexByKey.set(key, merged.length);
+        merged.push(next);
+        added.push(next);
+        return;
+      }
+      const currentEntry = merged[existingIndex];
+      merged[existingIndex] = {
+        ...currentEntry,
+        translation: entry.translation || currentEntry.translation,
+        starred: currentEntry.starred || Boolean(entry.starred),
+        archived: currentEntry.archived || Boolean(entry.archived),
+      };
+    });
+    return { merged, added };
   }
 
   function exampleKey(scope: "chat" | "common" | "scenario" | "topic", word: string, scenarioId?: string | null) {
@@ -1722,17 +1841,10 @@ export default function Home() {
     if (!target) return;
     setStudyPack((prev) => {
       if (!prev) return prev;
-      const next = prev.entries.filter((_, i) => i !== index);
+      const next = prev.entries.map((entry, i) =>
+        i === index ? { ...entry, archived: true } : entry
+      );
       return { ...prev, entries: next };
-    });
-    setStudyFlipped((prev) => {
-      const next: Record<number, boolean> = {};
-      Object.keys(prev).forEach((key) => {
-        const idx = Number(key);
-        if (Number.isNaN(idx) || idx === index) return;
-        next[idx > index ? idx - 1 : idx] = prev[idx];
-      });
-      return next;
     });
     await supabase
       .from("user_vocab")
@@ -1764,6 +1876,7 @@ export default function Home() {
           starred: !target.starred,
           count: 1,
           lastClicked: Date.now(),
+          archived: Boolean(target.archived),
         },
       ]);
     }
@@ -1801,17 +1914,11 @@ export default function Home() {
     setScenarioVocabMap((prev) => {
       const current = prev[scenarioId];
       if (!current) return prev;
-      const nextEntries = current.entries.filter((_, i) => i !== index);
-      return { ...prev, [scenarioId]: { ...current, entries: nextEntries } };
-    });
-    setScenarioVocabFlipped((prev) => {
-      const next: Record<number, boolean> = {};
-      Object.keys(prev).forEach((key) => {
-        const idx = Number(key);
-        if (Number.isNaN(idx) || idx === index) return;
-        next[idx > index ? idx - 1 : idx] = prev[idx];
-      });
-      return next;
+      const nextEntries = current.entries.map((entry, i) =>
+        i === index ? { ...entry, archived: true } : entry
+      );
+      const allArchived = nextEntries.every((entry) => entry.archived);
+      return { ...prev, [scenarioId]: { ...current, entries: nextEntries, archived: allArchived } };
     });
     await supabase
       .from("user_vocab")
@@ -1869,17 +1976,10 @@ export default function Home() {
     setTopicVocabMap((prev) => {
       const current = prev[activeTopic];
       if (!current) return prev;
-      const nextEntries = current.entries.filter((_, i) => i !== index);
+      const nextEntries = current.entries.map((entry, i) =>
+        i === index ? { ...entry, archived: true } : entry
+      );
       return { ...prev, [activeTopic]: { ...current, entries: nextEntries } };
-    });
-    setTopicVocabFlipped((prev) => {
-      const next: Record<number, boolean> = {};
-      Object.keys(prev).forEach((key) => {
-        const idx = Number(key);
-        if (Number.isNaN(idx) || idx === index) return;
-        next[idx > index ? idx - 1 : idx] = prev[idx];
-      });
-      return next;
     });
     await supabase
       .from("user_vocab")
@@ -1913,6 +2013,7 @@ export default function Home() {
           starred: !target.starred,
           count: 1,
           lastClicked: Date.now(),
+          archived: Boolean(target.archived),
         },
       ]);
     }
@@ -1940,7 +2041,8 @@ export default function Home() {
     if (!language || studyLoading) return;
     setStudyLoading(true);
     try {
-      const existing = studyPack?.entries.map((entry) => entry.word) ?? [];
+      const existingEntries = studyPack?.entries ?? [];
+      const existing = existingEntries.map((entry) => entry.word);
       const res = await fetch("/api/vocab-list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1950,13 +2052,11 @@ export default function Home() {
       const data = (await res.json()) as { items: StudyEntry[] };
       if (!Array.isArray(data.items) || data.items.length === 0) return;
       const incoming = data.items.map((item) => ({ ...item, starred: item.starred ?? false }));
+      const { merged, added } = mergeUniqueEntries(existingEntries, incoming);
 
-      setStudyPack((prev) => {
-        const merged = [...(prev?.entries ?? []), ...incoming];
-        return { language, entries: merged };
-      });
+      setStudyPack({ language, entries: merged });
 
-      const rows = incoming
+      const rows = added
         .map((item) => ({
           scope: "common" as const,
           scenarioId: null,
@@ -1979,7 +2079,8 @@ export default function Home() {
     setScenarioVocabLoading(true);
     try {
       const scenarioId = scenario.id;
-      const existing = scenarioVocabMap[scenarioId]?.entries.map((entry) => entry.word) ?? [];
+      const existingEntries = scenarioVocabMap[scenarioId]?.entries ?? [];
+      const existing = existingEntries.map((entry) => entry.word);
       const res = await fetch("/api/vocab-list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1997,14 +2098,14 @@ export default function Home() {
       const data = (await res.json()) as { items: StudyEntry[] };
       if (!Array.isArray(data.items) || data.items.length === 0) return;
       const incoming = data.items.map((item) => ({ ...item, starred: item.starred ?? false }));
+      const { merged, added } = mergeUniqueEntries(existingEntries, incoming);
 
-      setScenarioVocabMap((prev) => {
-        const current = prev[scenarioId];
-        const merged = [...(current?.entries ?? []), ...incoming];
-        return { ...prev, [scenarioId]: { language, entries: merged } };
-      });
+      setScenarioVocabMap((prev) => ({
+        ...prev,
+        [scenarioId]: { language, entries: merged, archived: false },
+      }));
 
-      const rows = incoming
+      const rows = added
         .map((item) => ({
           scope: "scenario" as const,
           scenarioId,
@@ -2026,7 +2127,8 @@ export default function Home() {
     if (!language || topicVocabLoading) return;
     setTopicVocabLoading(true);
     try {
-      const existing = topicVocabMap[topic]?.entries.map((entry) => entry.word) ?? [];
+      const existingEntries = topicVocabMap[topic]?.entries ?? [];
+      const existing = existingEntries.map((entry) => entry.word);
       const res = await fetch("/api/vocab-list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2042,14 +2144,14 @@ export default function Home() {
       const data = (await res.json()) as { items: StudyEntry[] };
       if (!Array.isArray(data.items) || data.items.length === 0) return;
       const incoming = data.items.map((item) => ({ ...item, starred: item.starred ?? false }));
+      const { merged, added } = mergeUniqueEntries(existingEntries, incoming);
 
-      setTopicVocabMap((prev) => {
-        const current = prev[topic];
-        const merged = [...(current?.entries ?? []), ...incoming];
-        return { ...prev, [topic]: { language, entries: merged } };
-      });
+      setTopicVocabMap((prev) => ({
+        ...prev,
+        [topic]: { language, entries: merged },
+      }));
 
-      const rows = incoming
+      const rows = added
         .map((item) => ({
           scope: "topic" as const,
           scenarioId: topic,
@@ -2068,7 +2170,10 @@ export default function Home() {
   }
 
   const sortedVocab = useMemo(() => {
-    return vocabEntries.slice().sort((a, b) => b.lastClicked - a.lastClicked);
+    return vocabEntries
+      .filter((entry) => !entry.archived)
+      .slice()
+      .sort((a, b) => b.lastClicked - a.lastClicked);
   }, [vocabEntries]);
 
   const topicList = useMemo(() => {
@@ -2076,6 +2181,13 @@ export default function Home() {
   }, [topicVocabMap]);
 
   const targetLabel = language || "Target";
+  const studyVisibleItems = useMemo(() => {
+    const entries = studyPack?.entries ?? [];
+    return entries
+      .map((entry, index) => ({ entry, index }))
+      .filter((item) => (showStudyArchivedOnly ? item.entry.archived : !item.entry.archived))
+      .filter((item) => (showStudyStarredOnly ? item.entry.starred : true));
+  }, [studyPack, showStudyArchivedOnly, showStudyStarredOnly]);
 
   const filteredVocab = useMemo(() => {
     if (!showStarredOnly) return sortedVocab;
@@ -2191,34 +2303,55 @@ export default function Home() {
           <button type="button" className="ghost" onClick={clearStudy}>
             Clear
           </button>
-          <button
-            type="button"
-            className={`toolbar-star-toggle ${showStudyStarredOnly ? "active" : ""}`}
-            onClick={() => setShowStudyStarredOnly((prev) => !prev)}
-            aria-label={showStudyStarredOnly ? "Show all words" : "Show starred only"}
-            aria-pressed={showStudyStarredOnly}
-            title={showStudyStarredOnly ? "Show all" : "Show starred only"}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
-                fill="currentColor"
-              />
-            </svg>
-            <span>Starred</span>
-          </button>
+          <div className="toolbar-right">
+            <button
+              type="button"
+              className={`toolbar-archive-toggle ${showStudyArchivedOnly ? "active" : ""}`}
+              onClick={() => setShowStudyArchivedOnly((prev) => !prev)}
+              aria-label={showStudyArchivedOnly ? "Show active words" : "Show archived words"}
+              aria-pressed={showStudyArchivedOnly}
+              title={showStudyArchivedOnly ? "Show active" : "Show archived"}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M4 7h16M6 7v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 7V5h6v2M9.5 12h5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span>Archived</span>
+            </button>
+            <button
+              type="button"
+              className={`toolbar-star-toggle ${showStudyStarredOnly ? "active" : ""}`}
+              onClick={() => setShowStudyStarredOnly((prev) => !prev)}
+              aria-label={showStudyStarredOnly ? "Show all words" : "Show starred only"}
+              aria-pressed={showStudyStarredOnly}
+              title={showStudyStarredOnly ? "Show all" : "Show starred only"}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
+                  fill="currentColor"
+                />
+              </svg>
+              <span>Starred</span>
+            </button>
+          </div>
         </div>
       </div>
       {!language ? (
         <p className="dashboard-alert">Set a language above to generate vocabulary.</p>
-      ) : !studyPack || studyPack.entries.length === 0 ? (
-        <div className="home-vocab-empty">Generate a list to start studying.</div>
+      ) : !studyPack || studyVisibleItems.length === 0 ? (
+        <div className="home-vocab-empty">
+          {showStudyArchivedOnly ? "No archived words yet." : "Generate a list to start studying."}
+        </div>
       ) : studyMode === "list" ? (
         <div className="vocab-list">
-          {(showStudyStarredOnly
-            ? studyPack.entries.map((entry, index) => ({ entry, index })).filter((item) => item.entry.starred)
-            : studyPack.entries.map((entry, index) => ({ entry, index }))
-          ).map(({ entry, index }) => (
+          {studyVisibleItems.map(({ entry, index }) => (
             <div key={`${entry.word}-${index}`} className="vocab-row">
               <div className="vocab-word">{entry.word}</div>
               <div className="vocab-translation">{entry.translation}</div>
@@ -2235,10 +2368,7 @@ export default function Home() {
         </div>
       ) : (
                 <div className="vocab-cards">
-                  {(showStudyStarredOnly
-                    ? studyPack.entries.map((entry, index) => ({ entry, index })).filter((item) => item.entry.starred)
-                    : studyPack.entries.map((entry, index) => ({ entry, index }))
-                  ).map(({ entry, index }) => {
+                  {studyVisibleItems.map(({ entry, index }) => {
                     const flipped = Boolean(studyFlipped[index]);
                     const frontText = studyFront === "word" ? entry.word : entry.translation;
                     const backText = studyFront === "word" ? entry.translation : entry.word;
@@ -2356,7 +2486,7 @@ export default function Home() {
         {SCENARIOS.map((scenario) => {
           const pack = scenarioVocabMap[scenario.id];
           const isArchived = Boolean(pack?.archived);
-          const count = pack?.entries.length || 0;
+          const count = pack?.entries.filter((entry) => !entry.archived).length || 0;
           return (
             <button
               key={scenario.id}
@@ -2396,8 +2526,8 @@ export default function Home() {
       <div className="task-banner vocab-banner">
         <div className="task-label">Scenario words</div>
         <div className="task-text">
-          {scenarioVocabMap[activeScenarioVocab.id]?.entries.length
-            ? `${scenarioVocabMap[activeScenarioVocab.id].entries.length} words ready`
+          {scenarioVocabMap[activeScenarioVocab.id]?.entries.filter((entry) => !entry.archived).length
+            ? `${scenarioVocabMap[activeScenarioVocab.id].entries.filter((entry) => !entry.archived).length} words ready`
             : "Generate a list to begin."}
         </div>
         <div className="home-vocab-actions">
@@ -2466,14 +2596,17 @@ export default function Home() {
       </div>
       {!language ? (
         <p className="dashboard-alert">Set a language above to generate vocabulary.</p>
-      ) : scenarioVocabMap[activeScenarioVocab.id]?.entries?.length ? (
+      ) : scenarioVocabMap[activeScenarioVocab.id]?.entries?.filter((entry) => !entry.archived).length ? (
         scenarioVocabMode === "list" ? (
           <div className="vocab-list">
             {(showScenarioStarredOnly
               ? scenarioVocabMap[activeScenarioVocab.id].entries
                   .map((entry, index) => ({ entry, index }))
+                  .filter((item) => !item.entry.archived)
                   .filter((item) => item.entry.starred)
-              : scenarioVocabMap[activeScenarioVocab.id].entries.map((entry, index) => ({ entry, index }))
+              : scenarioVocabMap[activeScenarioVocab.id].entries
+                  .map((entry, index) => ({ entry, index }))
+                  .filter((item) => !item.entry.archived)
             ).map(({ entry, index }) => (
               <div key={`${entry.word}-${index}`} className="vocab-row">
                 <div className="vocab-word">{entry.word}</div>
@@ -2498,8 +2631,11 @@ export default function Home() {
             {(showScenarioStarredOnly
               ? scenarioVocabMap[activeScenarioVocab.id].entries
                   .map((entry, index) => ({ entry, index }))
+                  .filter((item) => !item.entry.archived)
                   .filter((item) => item.entry.starred)
-              : scenarioVocabMap[activeScenarioVocab.id].entries.map((entry, index) => ({ entry, index }))
+              : scenarioVocabMap[activeScenarioVocab.id].entries
+                  .map((entry, index) => ({ entry, index }))
+                  .filter((item) => !item.entry.archived)
             ).map(({ entry, index }) => {
               const flipped = Boolean(scenarioVocabFlipped[index]);
               const frontText = scenarioVocabFront === "word" ? entry.word : entry.translation;
@@ -2620,8 +2756,8 @@ export default function Home() {
       <div className="task-banner vocab-banner">
         <div className="task-label">Topic list</div>
         <div className="task-text">
-          {topicVocabMap[activeTopic]?.entries.length
-            ? `${topicVocabMap[activeTopic].entries.length} words ready`
+          {topicVocabMap[activeTopic]?.entries.filter((entry) => !entry.archived).length
+            ? `${topicVocabMap[activeTopic].entries.filter((entry) => !entry.archived).length} words ready`
             : "Generate a list to begin."}
         </div>
         <div className="home-vocab-actions">
@@ -2690,14 +2826,17 @@ export default function Home() {
       </div>
       {!language ? (
         <p className="dashboard-alert">Set a language above to generate vocabulary.</p>
-      ) : topicVocabMap[activeTopic]?.entries?.length ? (
+      ) : topicVocabMap[activeTopic]?.entries?.filter((entry) => !entry.archived).length ? (
         topicVocabMode === "list" ? (
           <div className="vocab-list">
             {(showTopicStarredOnly
               ? topicVocabMap[activeTopic].entries
                   .map((entry, index) => ({ entry, index }))
+                  .filter((item) => !item.entry.archived)
                   .filter((item) => item.entry.starred)
-              : topicVocabMap[activeTopic].entries.map((entry, index) => ({ entry, index }))
+              : topicVocabMap[activeTopic].entries
+                  .map((entry, index) => ({ entry, index }))
+                  .filter((item) => !item.entry.archived)
             ).map(({ entry, index }) => (
               <div key={`${entry.word}-${index}`} className="vocab-row">
                 <div className="vocab-word">{entry.word}</div>
@@ -2718,8 +2857,11 @@ export default function Home() {
             {(showTopicStarredOnly
               ? topicVocabMap[activeTopic].entries
                   .map((entry, index) => ({ entry, index }))
+                  .filter((item) => !item.entry.archived)
                   .filter((item) => item.entry.starred)
-              : topicVocabMap[activeTopic].entries.map((entry, index) => ({ entry, index }))
+              : topicVocabMap[activeTopic].entries
+                  .map((entry, index) => ({ entry, index }))
+                  .filter((item) => !item.entry.archived)
             ).map(({ entry, index }) => {
               const flipped = Boolean(topicVocabFlipped[index]);
               const frontText = topicVocabFront === "word" ? entry.word : entry.translation;
@@ -3078,7 +3220,7 @@ export default function Home() {
                   <div className="scenario-card-body">Browse and generate words per scenario.</div>
                 </button>
                 {topicList.map((topic) => {
-                  const count = topicVocabMap[topic]?.entries.length || 0;
+                  const count = topicVocabMap[topic]?.entries.filter((entry) => !entry.archived).length || 0;
                   return (
                     <button
                       key={topic}
