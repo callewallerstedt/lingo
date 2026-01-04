@@ -103,7 +103,12 @@ export default function Home() {
   const [studyLoading, setStudyLoading] = useState<boolean>(false);
   const [exampleMap, setExampleMap] = useState<Record<string, string[]>>({});
   const [exampleLoading, setExampleLoading] = useState<Record<string, boolean>>({});
-  const [exampleModal, setExampleModal] = useState<{ word: string; lines: string[] } | null>(null);
+  const [exampleModal, setExampleModal] = useState<{
+    word: string;
+    lines: string[];
+    scope: "chat" | "common" | "scenario";
+    scenarioId?: string | null;
+  } | null>(null);
   const [scenarioVocabMap, setScenarioVocabMap] = useState<Record<string, StudyPack>>({});
   const [scenarioVocabMode, setScenarioVocabMode] = useState<"list" | "cards">("list");
   const [scenarioVocabFront, setScenarioVocabFront] = useState<"word" | "translation">("word");
@@ -1045,7 +1050,12 @@ export default function Home() {
     return renderClickableTokens(text, "assist");
   }
 
-  function renderClickableTokens(text: string, keyPrefix: string, wordClassName?: string) {
+  function renderClickableTokens(
+    text: string,
+    keyPrefix: string,
+    wordClassName?: string,
+    context?: { scope?: "chat" | "common" | "scenario"; scenarioId?: string | null; sentence?: string }
+  ) {
     const regex = /\s+|\p{L}[\p{L}\p{M}\p{Nd}\p{Pc}\p{Pd}]*|[^\s\p{L}]+/gu;
     const tokens = Array.from(text.matchAll(regex)).map((match) => match[0]);
 
@@ -1059,7 +1069,7 @@ export default function Home() {
           <span
             key={key}
             className={`token word${wordClassName ? ` ${wordClassName}` : ""}`}
-            onClick={(event) => onWordClick(event, event.currentTarget, token)}
+            onClick={(event) => onWordClick(event, event.currentTarget, token, context)}
           >
             {token}
           </span>
@@ -1091,7 +1101,12 @@ export default function Home() {
     });
   }
 
-  async function onWordClick(event: React.MouseEvent<HTMLSpanElement>, target: HTMLSpanElement, word: string) {
+  async function onWordClick(
+    event: React.MouseEvent<HTMLSpanElement>,
+    target: HTMLSpanElement,
+    word: string,
+    context?: { scope?: "chat" | "common" | "scenario"; scenarioId?: string | null; sentence?: string }
+  ) {
     event.stopPropagation();
     ignoreWindowClickRef.current = true;
     if (!activeScenarioRef.current) return;
@@ -1104,10 +1119,12 @@ export default function Home() {
       return;
     }
 
-    let sentence = "";
-    const messageElement = target.closest(".message, .feedback");
-    if (messageElement) {
-      sentence = messageElement.textContent || "";
+    let sentence = context?.sentence || "";
+    if (!sentence) {
+      const messageElement = target.closest(".message, .feedback");
+      if (messageElement) {
+        sentence = messageElement.textContent || "";
+      }
     }
 
     const cacheKey = normalizeWord(word);
@@ -1142,7 +1159,12 @@ export default function Home() {
       }
 
       clientCache.set(cacheKey, data.translation);
-      upsertVocab(word, data.translation);
+      addWordToList(
+        word,
+        data.translation,
+        context?.scope || "chat",
+        context?.scenarioId || null
+      );
       const elapsed = Date.now() - loadingStart;
       if (elapsed < 350) {
         await new Promise((resolve) => setTimeout(resolve, 350 - elapsed));
@@ -1196,6 +1218,70 @@ export default function Home() {
         lastClicked: nextClicked,
       },
     ]);
+  }
+
+  function addWordToList(
+    word: string,
+    translation: string,
+    scope: "chat" | "common" | "scenario",
+    scenarioId?: string | null
+  ) {
+    if (scope === "chat") {
+      upsertVocab(word, translation);
+      return;
+    }
+    if (scope === "common") {
+      setStudyPack((prev) => {
+        const entries = prev?.entries || [];
+        const exists = entries.some((entry) => normalizeWord(entry.word) === normalizeWord(word));
+        if (exists) return prev;
+        const nextEntries = [...entries, { word, translation, starred: false }];
+        return { language: language || "", entries: nextEntries };
+      });
+      const key = normalizeWord(word);
+      if (key) {
+        void upsertUserVocab([
+          {
+            scope: "common",
+            scenarioId: null,
+            wordKey: key,
+            word,
+            translation,
+            starred: false,
+            count: 1,
+            lastClicked: Date.now(),
+          },
+        ]);
+      }
+      return;
+    }
+    if (scope === "scenario" && scenarioId) {
+      setScenarioVocabMap((prev) => {
+        const current = prev[scenarioId]?.entries || [];
+        const exists = current.some((entry) => normalizeWord(entry.word) === normalizeWord(word));
+        if (exists) return prev;
+        const nextEntries = [...current, { word, translation, starred: false }];
+        return {
+          ...prev,
+          [scenarioId]: { language: language || "", entries: nextEntries },
+        };
+      });
+      const key = normalizeWord(word);
+      if (key) {
+        void upsertUserVocab([
+          {
+            scope: "scenario",
+            scenarioId,
+            wordKey: key,
+            word,
+            translation,
+            starred: false,
+            count: 1,
+            lastClicked: Date.now(),
+          },
+        ]);
+      }
+    }
   }
 
   function clearVocab() {
@@ -1323,12 +1409,12 @@ export default function Home() {
     const key = exampleKey(scope, word, scenarioId);
     const cached = exampleMap[key];
     if (cached && cached.length) {
-      setExampleModal({ word, lines: cached });
+      setExampleModal({ word, lines: cached, scope, scenarioId });
       return;
     }
     if (exampleLoading[key]) return;
     setExampleLoading((prev) => ({ ...prev, [key]: true }));
-    setExampleModal({ word, lines: [] });
+    setExampleModal({ word, lines: [], scope, scenarioId });
     try {
       const res = await fetch("/api/examples", {
         method: "POST",
@@ -1340,7 +1426,7 @@ export default function Home() {
       const lines = Array.isArray(data.lines) ? data.lines : [];
       setExampleMap((prev) => ({ ...prev, [key]: lines }));
       if (lines.length) {
-        setExampleModal({ word, lines });
+        setExampleModal({ word, lines, scope, scenarioId });
       }
     } finally {
       setExampleLoading((prev) => ({ ...prev, [key]: false }));
@@ -2361,7 +2447,13 @@ export default function Home() {
                     return (
                       <div key={`${exampleModal.word}-${index}`} className="vocab-example-line">
                         {label ? <strong>{label}:</strong> : null}{" "}
-                        {sentence ? renderClickableTokens(sentence, `ex-${index}`) : null}
+                        {sentence
+                          ? renderClickableTokens(sentence, `ex-${index}`, undefined, {
+                              scope: exampleModal.scope,
+                              scenarioId: exampleModal.scenarioId,
+                              sentence,
+                            })
+                          : null}
                       </div>
                     );
                   })}
