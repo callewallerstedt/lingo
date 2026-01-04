@@ -2171,87 +2171,98 @@ export default function Home() {
     <div className="app-shell">
       <header className="top-bar">
         <div className="brand">
-          <div className="brand-name">NeoLingo</div>
+          <button type="button" className="brand-button" onClick={() => setView("dashboard")}>
+            <span className="brand-name">NeoLingo</span>
+          </button>
         </div>
+
         {authUser ? (
-          <div className="top-controls">
-            <div className="field">
-              <label className="label">Language</label>
-              <select
-                value={language || ""}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  if (value === "__add__") {
-                    setAddLanguageOpen(true);
-                    return;
-                  }
-                  setAddLanguageOpen(false);
-                  if (value) {
-                    void saveLanguagePreference(value);
-                  }
-                }}
-              >
-                {languageOptions.length === 0 ? (
-                  <option value="">Select language</option>
+          <div className="header-controls">
+            <div className="control-group">
+              <div className="control-item">
+                <label className="control-label">Language</label>
+                <select
+                  className="control-select"
+                  value={language || ""}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    if (value === "__add__") {
+                      setAddLanguageOpen(true);
+                      return;
+                    }
+                    setAddLanguageOpen(false);
+                    if (value) {
+                      void saveLanguagePreference(value);
+                    }
+                  }}
+                >
+                  {languageOptions.length === 0 ? (
+                    <option value="">Select language</option>
+                  ) : null}
+                  {languageOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                  <option value="__add__">+ Add new language</option>
+                </select>
+                {addLanguageOpen ? (
+                  <div className="language-add">
+                    <input
+                      type="text"
+                      className="language-input"
+                      value={newLanguageInput}
+                      onChange={(event) => setNewLanguageInput(event.target.value)}
+                      placeholder="Add language"
+                    />
+                    <button
+                      type="button"
+                      className="language-save-btn"
+                      onClick={() => void saveLanguagePreference(newLanguageInput)}
+                    >
+                      Save
+                    </button>
+                  </div>
                 ) : null}
-                {languageOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-                <option value="__add__">+ Add new language</option>
-              </select>
-              {addLanguageOpen ? (
-                <div className="language-add">
-                  <input
-                    type="text"
-                    value={newLanguageInput}
-                    onChange={(event) => setNewLanguageInput(event.target.value)}
-                    placeholder="Add language"
-                  />
+              </div>
+
+              <div className="control-item">
+                <label className="control-label">Difficulty</label>
+                <div className="difficulty-controls">
                   <button
                     type="button"
-                    className="ghost"
-                    onClick={() => void saveLanguagePreference(newLanguageInput)}
+                    className={`difficulty-btn ${difficulty === "easy" ? "active" : ""}`}
+                    onClick={() => setDifficulty("easy")}
                   >
-                    Save
+                    Easy
+                  </button>
+                  <button
+                    type="button"
+                    className={`difficulty-btn ${difficulty === "medium" ? "active" : ""}`}
+                    onClick={() => setDifficulty("medium")}
+                  >
+                    Medium
+                  </button>
+                  <button
+                    type="button"
+                    className={`difficulty-btn ${difficulty === "hard" ? "active" : ""}`}
+                    onClick={() => setDifficulty("hard")}
+                  >
+                    Hard
                   </button>
                 </div>
-              ) : null}
-            </div>
-            <div className="field">
-              <label className="label">Difficulty</label>
-              <div className="segmented">
-                <button
-                  type="button"
-                  className={`segmented-btn ${difficulty === "easy" ? "active" : ""}`}
-                  onClick={() => setDifficulty("easy")}
-                >
-                  Easy
-                </button>
-                <button
-                  type="button"
-                  className={`segmented-btn ${difficulty === "medium" ? "active" : ""}`}
-                  onClick={() => setDifficulty("medium")}
-                >
-                  Medium
-                </button>
-                <button
-                  type="button"
-                  className={`segmented-btn ${difficulty === "hard" ? "active" : ""}`}
-                  onClick={() => setDifficulty("hard")}
-                >
-                  Hard
-                </button>
               </div>
             </div>
-            <div className="points-pill">Points {totalPoints()}</div>
-            <div className="logged-in">
-              Logged in as {profileName || username || authUser.email}
+
+            <div className="user-section">
+              <div className="user-info">
+                <span className="user-points">Points {totalPoints()}</span>
+                <span className="user-name">{profileName || username || authUser.email}</span>
+              </div>
+              <button type="button" className="signout-btn" onClick={handleLogout}>
+                Sign out
+              </button>
             </div>
-            <button type="button" className="ghost" onClick={handleLogout}>
-              Sign out
-            </button>
           </div>
         ) : null}
       </header>
