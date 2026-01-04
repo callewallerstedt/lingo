@@ -587,7 +587,7 @@ export default function Home() {
   }
 
   async function upsertUserVocab(rows: Array<{
-    scope: "chat" | "common" | "scenario";
+    scope: "chat" | "common" | "scenario" | "topic";
     scenarioId?: string | null;
     wordKey: string;
     word: string;
