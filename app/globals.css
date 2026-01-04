@@ -1450,7 +1450,7 @@ body {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  overflow-x: auto;
+  overflow: visible;
   scrollbar-width: none;
 }
 
@@ -1494,6 +1494,7 @@ body {
   position: relative;
   display: inline-flex;
   align-items: center;
+  z-index: 3;
 }
 
 .action-fab-main {
