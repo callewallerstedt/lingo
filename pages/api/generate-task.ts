@@ -36,6 +36,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             "Avoid repeating the tasks in the avoid list.",
             "Use simple, common words suitable for language learners.",
             "The task is for the learner's role, not the staff role.",
+            "Always include the full flow for the scenario: ordering, confirming, paying, and receiving the item/service.",
+            "Use compact wording so the full flow fits in the word limit.",
             "Output only the task sentence, no quotes or extra text.",
           ].join(" "),
         },

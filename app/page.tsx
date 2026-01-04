@@ -47,6 +47,7 @@ type StudyEntry = {
 type StudyPack = {
   language: string;
   entries: StudyEntry[];
+  archived?: boolean;
 };
 
 type ProgressMap = Record<string, number>;
@@ -72,7 +73,9 @@ export default function Home() {
   const [progressMap, setProgressMap] = useState<ProgressMap>({});
   const [loadingProgress, setLoadingProgress] = useState<boolean>(false);
 
-  const [view, setView] = useState<"dashboard" | "chat" | "common" | "scenario-vocab" | "scenario-detail">("dashboard");
+  const [view, setView] = useState<
+    "dashboard" | "chat" | "common" | "scenario-vocab" | "scenario-detail" | "topic-detail"
+  >("dashboard");
   const [activeScenario, setActiveScenario] = useState<ScenarioDefinition | null>(null);
   const [taskText, setTaskText] = useState<string>("");
   const [taskLoading, setTaskLoading] = useState<boolean>(false);
@@ -101,12 +104,21 @@ export default function Home() {
   const [studyFront, setStudyFront] = useState<"word" | "translation">("word");
   const [studyFlipped, setStudyFlipped] = useState<Record<number, boolean>>({});
   const [studyLoading, setStudyLoading] = useState<boolean>(false);
+  const [topicVocabMap, setTopicVocabMap] = useState<Record<string, StudyPack>>({});
+  const [topicVocabMode, setTopicVocabMode] = useState<"list" | "cards">("list");
+  const [topicVocabFront, setTopicVocabFront] = useState<"word" | "translation">("word");
+  const [topicVocabFlipped, setTopicVocabFlipped] = useState<Record<number, boolean>>({});
+  const [topicVocabLoading, setTopicVocabLoading] = useState<boolean>(false);
+  const [activeTopic, setActiveTopic] = useState<string | null>(null);
+  const [showTopicStarredOnly, setShowTopicStarredOnly] = useState<boolean>(false);
+  const [showTopicModal, setShowTopicModal] = useState<boolean>(false);
+  const [topicInput, setTopicInput] = useState<string>("");
   const [exampleMap, setExampleMap] = useState<Record<string, string[]>>({});
   const [exampleLoading, setExampleLoading] = useState<Record<string, boolean>>({});
   const [exampleModal, setExampleModal] = useState<{
     word: string;
     lines: string[];
-    scope: "chat" | "common" | "scenario";
+    scope: "chat" | "common" | "scenario" | "topic";
     scenarioId?: string | null;
   } | null>(null);
   const [scenarioVocabMap, setScenarioVocabMap] = useState<Record<string, StudyPack>>({});
@@ -138,6 +150,7 @@ export default function Home() {
     const savedFront = localStorage.getItem("lingoarc_vocab_front");
     const savedStudy = localStorage.getItem("lingoarc_study_pack");
     const savedScenarioVocab = localStorage.getItem("lingoarc_scenario_vocab");
+    const savedTopicVocab = localStorage.getItem("lingoarc_topic_vocab");
     const savedUsername = localStorage.getItem("lingoarc_username");
     if (savedVocab) {
       try {
@@ -167,6 +180,16 @@ export default function Home() {
         }
       } catch {
         // Ignore malformed scenario vocab cache
+      }
+    }
+    if (savedTopicVocab) {
+      try {
+        const parsed = JSON.parse(savedTopicVocab) as Record<string, StudyPack>;
+        if (parsed && typeof parsed === "object") {
+          setTopicVocabMap(parsed);
+        }
+      } catch {
+        // Ignore malformed topic vocab cache
       }
     }
     if (savedLanguage) {
@@ -205,6 +228,10 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("lingoarc_scenario_vocab", JSON.stringify(scenarioVocabMap));
   }, [scenarioVocabMap]);
+
+  useEffect(() => {
+    localStorage.setItem("lingoarc_topic_vocab", JSON.stringify(topicVocabMap));
+  }, [topicVocabMap]);
 
 
   useEffect(() => {
@@ -249,10 +276,30 @@ export default function Home() {
     const savedScenarioVocab = localStorage.getItem("lingoarc_scenario_vocab");
     if (!savedScenarioVocab) {
       setScenarioVocabMap({});
+    } else {
+      try {
+        const parsed = JSON.parse(savedScenarioVocab) as Record<string, StudyPack>;
+        if (parsed && typeof parsed === "object") {
+          const filtered: Record<string, StudyPack> = {};
+          Object.entries(parsed).forEach(([key, value]) => {
+            if (value?.language === language) {
+              filtered[key] = value;
+            }
+          });
+          setScenarioVocabMap(filtered);
+        }
+      } catch {
+        setScenarioVocabMap({});
+      }
+    }
+
+    const savedTopicVocab = localStorage.getItem("lingoarc_topic_vocab");
+    if (!savedTopicVocab) {
+      setTopicVocabMap({});
       return;
     }
     try {
-      const parsed = JSON.parse(savedScenarioVocab) as Record<string, StudyPack>;
+      const parsed = JSON.parse(savedTopicVocab) as Record<string, StudyPack>;
       if (parsed && typeof parsed === "object") {
         const filtered: Record<string, StudyPack> = {};
         Object.entries(parsed).forEach(([key, value]) => {
@@ -260,10 +307,10 @@ export default function Home() {
             filtered[key] = value;
           }
         });
-        setScenarioVocabMap(filtered);
+        setTopicVocabMap(filtered);
       }
     } catch {
-      setScenarioVocabMap({});
+      setTopicVocabMap({});
     }
   }, [authUser, language]);
 
@@ -299,6 +346,7 @@ export default function Home() {
       setLanguageOptions([]);
       setStudyPack(null);
       setScenarioVocabMap({});
+      setTopicVocabMap({});
       setProfileName("");
       return;
     }
@@ -481,7 +529,7 @@ export default function Home() {
     if (!authUser) return;
     const { data, error } = await supabase
       .from("user_vocab")
-      .select("scope, scenario_id, word_key, word, translation, starred, count, last_clicked")
+      .select("scope, scenario_id, word_key, word, translation, starred, count, last_clicked, archived")
       .eq("user_id", authUser.id)
       .eq("language", activeLanguage);
 
@@ -492,8 +540,10 @@ export default function Home() {
     const chatEntries: VocabEntry[] = [];
     const commonEntries: StudyEntry[] = [];
     const scenarioMap: Record<string, StudyPack> = {};
+    const topicMap: Record<string, StudyPack> = {};
 
     (data || []).forEach((row) => {
+      const isArchived = Boolean(row.archived);
       if (row.scope === "chat") {
         chatEntries.push({
           key: row.word_key,
@@ -514,9 +564,15 @@ export default function Home() {
         commonEntries.push(entry);
       } else if (row.scope === "scenario" && row.scenario_id) {
         if (!scenarioMap[row.scenario_id]) {
-          scenarioMap[row.scenario_id] = { language: activeLanguage, entries: [] };
+          scenarioMap[row.scenario_id] = { language: activeLanguage, entries: [], archived: isArchived };
         }
         scenarioMap[row.scenario_id].entries.push(entry);
+        scenarioMap[row.scenario_id].archived = isArchived;
+      } else if (row.scope === "topic" && row.scenario_id) {
+        if (!topicMap[row.scenario_id]) {
+          topicMap[row.scenario_id] = { language: activeLanguage, entries: [] };
+        }
+        topicMap[row.scenario_id].entries.push(entry);
       }
     });
 
@@ -527,6 +583,7 @@ export default function Home() {
       setStudyPack(null);
     }
     setScenarioVocabMap(scenarioMap);
+    setTopicVocabMap(topicMap);
   }
 
   async function upsertUserVocab(rows: Array<{
@@ -538,6 +595,7 @@ export default function Home() {
     starred: boolean;
     count?: number;
     lastClicked?: number;
+    archived?: boolean;
   }>) {
     if (!authUser || !language) return;
     if (!rows.length) return;
@@ -552,13 +610,18 @@ export default function Home() {
       starred: row.starred,
       count: row.count ?? 1,
       last_clicked: new Date(row.lastClicked ?? Date.now()).toISOString(),
+      archived: row.archived ?? false,
     }));
     await supabase.from("user_vocab").upsert(payload, {
       onConflict: "user_id,language,scope,scenario_id,word_key",
     });
   }
 
-  async function deleteUserVocab(scope: "chat" | "common" | "scenario", wordKey: string, scenarioId?: string | null) {
+  async function deleteUserVocab(
+    scope: "chat" | "common" | "scenario" | "topic",
+    wordKey: string,
+    scenarioId?: string | null
+  ) {
     if (!authUser || !language) return;
     let query = supabase
       .from("user_vocab")
@@ -575,7 +638,7 @@ export default function Home() {
     await query;
   }
 
-  async function clearUserVocabScope(scope: "common" | "scenario", scenarioId?: string | null) {
+  async function clearUserVocabScope(scope: "common" | "scenario" | "topic", scenarioId?: string | null) {
     if (!authUser || !language) return;
     let query = supabase
       .from("user_vocab")
@@ -583,10 +646,119 @@ export default function Home() {
       .eq("user_id", authUser.id)
       .eq("language", language)
       .eq("scope", scope);
-    if (scope === "scenario" && scenarioId) {
+    if ((scope === "scenario" || scope === "topic") && scenarioId) {
       query = query.eq("scenario_id", scenarioId);
     }
     await query;
+  }
+
+  async function archiveScenarioVocab(scenarioId: string) {
+    if (!authUser || !language) return;
+    await supabase
+      .from("user_vocab")
+      .update({ archived: true })
+      .eq("user_id", authUser.id)
+      .eq("language", language)
+      .eq("scope", "scenario")
+      .eq("scenario_id", scenarioId);
+    setScenarioVocabMap((prev) => ({
+      ...prev,
+      [scenarioId]: {
+        ...(prev[scenarioId] || { language, entries: [] }),
+        archived: true,
+      },
+    }));
+  }
+
+  async function archiveScenarioVocabUnstarred(scenarioId: string) {
+    if (!authUser || !language) return;
+    const entries = scenarioVocabMap[scenarioId]?.entries || [];
+    const remaining = entries.filter((entry) => entry.starred);
+    const toArchive = entries.filter((entry) => !entry.starred);
+    if (!toArchive.length) {
+      await archiveScenarioVocab(scenarioId);
+      return;
+    }
+    const keys = toArchive.map((entry) => normalizeWord(entry.word)).filter(Boolean);
+    if (keys.length) {
+      await supabase
+        .from("user_vocab")
+        .delete()
+        .eq("user_id", authUser.id)
+        .eq("language", language)
+        .eq("scope", "scenario")
+        .eq("scenario_id", scenarioId)
+        .in("word_key", keys);
+    }
+    setScenarioVocabMap((prev) => ({
+      ...prev,
+      [scenarioId]: {
+        language,
+        entries: remaining,
+        archived: true,
+      },
+    }));
+  }
+
+  async function archiveCommonUnstarred() {
+    if (!authUser || !language || !studyPack) return;
+    const remaining = studyPack.entries.filter((entry) => entry.starred);
+    const toArchive = studyPack.entries.filter((entry) => !entry.starred);
+    const keys = toArchive.map((entry) => normalizeWord(entry.word)).filter(Boolean);
+    if (keys.length) {
+      await supabase
+        .from("user_vocab")
+        .delete()
+        .eq("user_id", authUser.id)
+        .eq("language", language)
+        .eq("scope", "common")
+        .in("word_key", keys);
+    }
+    setStudyPack({ language: studyPack.language, entries: remaining });
+  }
+
+  async function archiveChatUnstarred() {
+    if (!authUser || !language) return;
+    const remaining = vocabEntries.filter((entry) => entry.starred);
+    const toArchive = vocabEntries.filter((entry) => !entry.starred);
+    const keys = toArchive.map((entry) => entry.key).filter(Boolean);
+    if (keys.length) {
+      await supabase
+        .from("user_vocab")
+        .delete()
+        .eq("user_id", authUser.id)
+        .eq("language", language)
+        .eq("scope", "chat")
+        .in("word_key", keys);
+    }
+    setVocabEntries(remaining);
+  }
+
+  async function archiveTopicUnstarred(topic: string) {
+    if (!authUser || !language) return;
+    const current = topicVocabMap[topic];
+    if (!current) return;
+    const remaining = current.entries.filter((entry) => entry.starred);
+    const toArchive = current.entries.filter((entry) => !entry.starred);
+    const keys = toArchive.map((entry) => normalizeWord(entry.word)).filter(Boolean);
+    if (keys.length) {
+      await supabase
+        .from("user_vocab")
+        .delete()
+        .eq("user_id", authUser.id)
+        .eq("language", language)
+        .eq("scope", "topic")
+        .eq("scenario_id", topic)
+        .in("word_key", keys);
+    }
+    setTopicVocabMap((prev) => ({
+      ...prev,
+      [topic]: {
+        language: current.language,
+        entries: remaining,
+      },
+    }));
+    setTopicVocabFlipped({});
   }
 
   async function handleLogout() {
@@ -1054,7 +1226,7 @@ export default function Home() {
     text: string,
     keyPrefix: string,
     wordClassName?: string,
-    context?: { scope?: "chat" | "common" | "scenario"; scenarioId?: string | null; sentence?: string }
+    context?: { scope?: "chat" | "common" | "scenario" | "topic"; scenarioId?: string | null; sentence?: string }
   ) {
     const regex = /\s+|\p{L}[\p{L}\p{M}\p{Nd}\p{Pc}\p{Pd}]*|[^\s\p{L}]+/gu;
     const tokens = Array.from(text.matchAll(regex)).map((match) => match[0]);
@@ -1105,11 +1277,10 @@ export default function Home() {
     event: React.MouseEvent<HTMLSpanElement>,
     target: HTMLSpanElement,
     word: string,
-    context?: { scope?: "chat" | "common" | "scenario"; scenarioId?: string | null; sentence?: string }
+    context?: { scope?: "chat" | "common" | "scenario" | "topic"; scenarioId?: string | null; sentence?: string }
   ) {
     event.stopPropagation();
     ignoreWindowClickRef.current = true;
-    if (!activeScenarioRef.current) return;
     const activeSessionId = await ensureChatSession();
     if (!activeSessionId) return;
 
@@ -1223,7 +1394,7 @@ export default function Home() {
   function addWordToList(
     word: string,
     translation: string,
-    scope: "chat" | "common" | "scenario",
+    scope: "chat" | "common" | "scenario" | "topic",
     scenarioId?: string | null
   ) {
     if (scope === "chat") {
@@ -1271,6 +1442,34 @@ export default function Home() {
         void upsertUserVocab([
           {
             scope: "scenario",
+            scenarioId,
+            wordKey: key,
+            word,
+            translation,
+            starred: false,
+            count: 1,
+            lastClicked: Date.now(),
+          },
+        ]);
+      }
+      return;
+    }
+    if (scope === "topic" && scenarioId) {
+      setTopicVocabMap((prev) => {
+        const current = prev[scenarioId]?.entries || [];
+        const exists = current.some((entry) => normalizeWord(entry.word) === normalizeWord(word));
+        if (exists) return prev;
+        const nextEntries = [...current, { word, translation, starred: false }];
+        return {
+          ...prev,
+          [scenarioId]: { language: language || "", entries: nextEntries },
+        };
+      });
+      const key = normalizeWord(word);
+      if (key) {
+        void upsertUserVocab([
+          {
+            scope: "topic",
             scenarioId,
             wordKey: key,
             word,
@@ -1399,12 +1598,12 @@ export default function Home() {
       .replace(/[^\p{L}\p{M}\p{Nd}'-]/gu, "");
   }
 
-  function exampleKey(scope: "chat" | "common" | "scenario", word: string, scenarioId?: string | null) {
+  function exampleKey(scope: "chat" | "common" | "scenario" | "topic", word: string, scenarioId?: string | null) {
     const base = normalizeWord(word) || word.toLowerCase();
     return `${scope}:${scenarioId || "none"}:${base}`;
   }
 
-  async function generateExamples(scope: "chat" | "common" | "scenario", word: string, scenarioId?: string | null) {
+  async function generateExamples(scope: "chat" | "common" | "scenario" | "topic", word: string, scenarioId?: string | null) {
     if (!language) return;
     const key = exampleKey(scope, word, scenarioId);
     const cached = exampleMap[key];
@@ -1511,6 +1710,90 @@ export default function Home() {
     }
   }
 
+  function createTopicVocab(topic: string) {
+    const trimmed = topic.trim();
+    if (!trimmed) return;
+    setTopicVocabMap((prev) => {
+      if (prev[trimmed]) return prev;
+      return { ...prev, [trimmed]: { language: language || "", entries: [] } };
+    });
+    setActiveTopic(trimmed);
+    setTopicVocabFlipped({});
+    setTopicVocabMode("list");
+    setShowTopicStarredOnly(false);
+    setShowTopicModal(false);
+    setTopicInput("");
+    setView("topic-detail");
+  }
+
+  function deleteTopicEntry(index: number) {
+    if (!activeTopic) return;
+    const target = topicVocabMap[activeTopic]?.entries[index];
+    setTopicVocabMap((prev) => {
+      const current = prev[activeTopic];
+      if (!current) return prev;
+      const nextEntries = current.entries.filter((_, i) => i !== index);
+      return { ...prev, [activeTopic]: { ...current, entries: nextEntries } };
+    });
+    setTopicVocabFlipped((prev) => {
+      const next: Record<number, boolean> = {};
+      Object.keys(prev).forEach((key) => {
+        const idx = Number(key);
+        if (Number.isNaN(idx) || idx === index) return;
+        next[idx > index ? idx - 1 : idx] = prev[idx];
+      });
+      return next;
+    });
+    if (target) {
+      void deleteUserVocab("topic", normalizeWord(target.word), activeTopic);
+    }
+  }
+
+  function toggleTopicStar(index: number) {
+    if (!activeTopic) return;
+    const target = topicVocabMap[activeTopic]?.entries[index];
+    setTopicVocabMap((prev) => {
+      const current = prev[activeTopic];
+      if (!current) return prev;
+      const nextEntries = current.entries.map((entry, i) =>
+        i === index ? { ...entry, starred: !entry.starred } : entry
+      );
+      return { ...prev, [activeTopic]: { ...current, entries: nextEntries } };
+    });
+    if (target) {
+      void upsertUserVocab([
+        {
+          scope: "topic",
+          scenarioId: activeTopic,
+          wordKey: normalizeWord(target.word),
+          word: target.word,
+          translation: target.translation,
+          starred: !target.starred,
+          count: 1,
+          lastClicked: Date.now(),
+        },
+      ]);
+    }
+  }
+
+  function clearTopicVocab() {
+    if (!activeTopic) return;
+    setTopicVocabMap((prev) => {
+      const next = { ...prev };
+      delete next[activeTopic];
+      return next;
+    });
+    setTopicVocabFlipped({});
+    void clearUserVocabScope("topic", activeTopic);
+  }
+
+  function toggleTopicCard(index: number) {
+    setTopicVocabFlipped((prev) => ({
+      ...prev,
+      [index]: !prev[index],
+    }));
+  }
+
   async function generateStudyWords(count: number, level?: "core" | "advanced") {
     if (!language || studyLoading) return;
     setStudyLoading(true);
@@ -1597,9 +1880,58 @@ export default function Home() {
     }
   }
 
+  async function generateTopicWords(count: number, topic: string) {
+    if (!language || topicVocabLoading) return;
+    setTopicVocabLoading(true);
+    try {
+      const existing = topicVocabMap[topic]?.entries.map((entry) => entry.word) ?? [];
+      const res = await fetch("/api/vocab-list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          language,
+          count,
+          existing,
+          scenarioTitle: topic,
+          scenarioDetail: `Topic: ${topic}`,
+        }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { items: StudyEntry[] };
+      if (!Array.isArray(data.items) || data.items.length === 0) return;
+      const incoming = data.items.map((item) => ({ ...item, starred: item.starred ?? false }));
+
+      setTopicVocabMap((prev) => {
+        const current = prev[topic];
+        const merged = [...(current?.entries ?? []), ...incoming];
+        return { ...prev, [topic]: { language, entries: merged } };
+      });
+
+      const rows = incoming
+        .map((item) => ({
+          scope: "topic" as const,
+          scenarioId: topic,
+          wordKey: normalizeWord(item.word),
+          word: item.word,
+          translation: item.translation,
+          starred: Boolean(item.starred),
+          count: 1,
+          lastClicked: Date.now(),
+        }))
+        .filter((row) => row.wordKey);
+      void upsertUserVocab(rows);
+    } finally {
+      setTopicVocabLoading(false);
+    }
+  }
+
   const sortedVocab = useMemo(() => {
     return vocabEntries.slice().sort((a, b) => b.lastClicked - a.lastClicked);
   }, [vocabEntries]);
+
+  const topicList = useMemo(() => {
+    return Object.keys(topicVocabMap).sort((a, b) => a.localeCompare(b));
+  }, [topicVocabMap]);
 
   const filteredVocab = useMemo(() => {
     if (!showStarredOnly) return sortedVocab;
@@ -1682,6 +2014,9 @@ export default function Home() {
             disabled={!language || studyLoading}
           >
             {studyLoading ? "Generating" : "Important harder words"}
+          </button>
+          <button type="button" className="ghost" onClick={() => void archiveCommonUnstarred()}>
+            Archive all but starred
           </button>
           <button type="button" className="ghost" onClick={clearStudy}>
             Clear
@@ -1852,12 +2187,14 @@ export default function Home() {
       </div>
       <div className="scenario-grid">
         {SCENARIOS.map((scenario) => {
-          const count = scenarioVocabMap[scenario.id]?.entries.length || 0;
+          const pack = scenarioVocabMap[scenario.id];
+          const isArchived = Boolean(pack?.archived);
+          const count = pack?.entries.length || 0;
           return (
             <button
               key={scenario.id}
               type="button"
-              className="scenario-card"
+              className={`scenario-card${isArchived ? " archived" : ""}`}
               onClick={() => {
                 setActiveScenarioVocab(scenario);
                 setScenarioVocabFlipped({});
@@ -1912,6 +2249,13 @@ export default function Home() {
             disabled={!language || scenarioVocabLoading}
           >
             {scenarioVocabLoading ? "Generating" : "Generate 10 more"}
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => void archiveScenarioVocabUnstarred(activeScenarioVocab.id)}
+          >
+            Archive all but starred
           </button>
           <button type="button" className="ghost" onClick={clearScenarioVocab}>
             Clear
@@ -2075,6 +2419,207 @@ export default function Home() {
         )
       ) : (
         <div className="home-vocab-empty">Generate words for this scenario.</div>
+      )}
+    </section>
+  ) : null;
+
+  const topicDetailView = activeTopic ? (
+    <section className="chat-shell">
+      <div className="chat-header">
+        <button type="button" className="ghost" onClick={() => setView("dashboard")}>
+          Back
+        </button>
+        <div className="chat-title">
+          <div className="chat-title-main">{activeTopic} vocabulary</div>
+          <div className="chat-title-sub">Custom topic words.</div>
+        </div>
+      </div>
+      <div className="task-banner">
+        <div className="task-label">Topic list</div>
+        <div className="task-text">
+          {topicVocabMap[activeTopic]?.entries.length
+            ? `${topicVocabMap[activeTopic].entries.length} words ready`
+            : "Generate a list to begin."}
+        </div>
+        <div className="home-vocab-actions">
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => generateTopicWords(20, activeTopic)}
+            disabled={!language || topicVocabLoading}
+          >
+            {topicVocabLoading ? "Generating" : "Generate 20"}
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => generateTopicWords(10, activeTopic)}
+            disabled={!language || topicVocabLoading}
+          >
+            {topicVocabLoading ? "Generating" : "Generate 10 more"}
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => void archiveTopicUnstarred(activeTopic)}
+          >
+            Archive all but starred
+          </button>
+          <button type="button" className="ghost" onClick={clearTopicVocab}>
+            Clear
+          </button>
+        </div>
+      </div>
+      <div className="home-vocab-controls">
+        <div className="segmented">
+          <button
+            type="button"
+            className={`segmented-btn ${topicVocabMode === "list" ? "active" : ""}`}
+            onClick={() => setTopicVocabMode("list")}
+          >
+            List
+          </button>
+          <button
+            type="button"
+            className={`segmented-btn ${topicVocabMode === "cards" ? "active" : ""}`}
+            onClick={() => setTopicVocabMode("cards")}
+          >
+            Flashcards
+          </button>
+        </div>
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => {
+            setTopicVocabFront((prev) => (prev === "word" ? "translation" : "word"));
+            setTopicVocabFlipped({});
+          }}
+        >
+          Start: {topicVocabFront === "word" ? "Target" : "English"}
+        </button>
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => setShowTopicStarredOnly((prev) => !prev)}
+        >
+          {showTopicStarredOnly ? "Show all" : "Starred only"}
+        </button>
+      </div>
+      {!language ? (
+        <p className="dashboard-alert">Set a language above to generate vocabulary.</p>
+      ) : topicVocabMap[activeTopic]?.entries?.length ? (
+        topicVocabMode === "list" ? (
+          <div className="vocab-list">
+            {(showTopicStarredOnly
+              ? topicVocabMap[activeTopic].entries
+                  .map((entry, index) => ({ entry, index }))
+                  .filter((item) => item.entry.starred)
+              : topicVocabMap[activeTopic].entries.map((entry, index) => ({ entry, index }))
+            ).map(({ entry, index }) => (
+              <div key={`${entry.word}-${index}`} className="vocab-row">
+                <div className="vocab-word">{entry.word}</div>
+                <div className="vocab-translation">{entry.translation}</div>
+                <div className="vocab-actions">
+                  <button type="button" className="ghost" onClick={() => toggleTopicStar(index)}>
+                    {entry.starred ? "Unstar" : "Star"}
+                  </button>
+                  <button type="button" className="ghost" onClick={() => deleteTopicEntry(index)}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="vocab-cards">
+            {(showTopicStarredOnly
+              ? topicVocabMap[activeTopic].entries
+                  .map((entry, index) => ({ entry, index }))
+                  .filter((item) => item.entry.starred)
+              : topicVocabMap[activeTopic].entries.map((entry, index) => ({ entry, index }))
+            ).map(({ entry, index }) => {
+              const flipped = Boolean(topicVocabFlipped[index]);
+              const frontText = topicVocabFront === "word" ? entry.word : entry.translation;
+              const backText = topicVocabFront === "word" ? entry.translation : entry.word;
+              return (
+                <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
+                  <div
+                    className={`vocab-card ${flipped ? "flipped" : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => toggleTopicCard(index)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        toggleTopicCard(index);
+                      }
+                    }}
+                    aria-pressed={flipped ? "true" : "false"}
+                  >
+                    <div className="vocab-card-actions">
+                      <button
+                        type="button"
+                        className={`vocab-card-icon ${entry.starred ? "active" : ""}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleTopicStar(index);
+                        }}
+                        aria-label="Star"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
+                            fill="currentColor"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className="vocab-card-icon"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void generateExamples("topic", entry.word, activeTopic);
+                        }}
+                        aria-label="Examples"
+                      >
+                        Ex
+                      </button>
+                      <button
+                        type="button"
+                        className="vocab-card-icon"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          deleteTopicEntry(index);
+                        }}
+                        aria-label="Delete"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M6 6l12 12M18 6L6 18"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+                    <div className="vocab-card-face">
+                      <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
+                        {flipped ? backText : frontText}
+                      </div>
+                      <div className="vocab-card-hint">
+                        {flipped ? "Tap to hide" : "Tap to flip"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )
+      ) : (
+        <div className="home-vocab-empty">Generate words for this topic.</div>
       )}
     </section>
   ) : null;
@@ -2308,6 +2853,13 @@ export default function Home() {
                   <h2>Vocabulary</h2>
                   <p>Jump into learning with common words and scenario vocab.</p>
                 </div>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => setShowTopicModal(true)}
+                >
+                  + New topic
+                </button>
               </div>
               <div className="scenario-grid">
                 <button type="button" className="scenario-card" onClick={() => setView("common")}>
@@ -2326,6 +2878,29 @@ export default function Home() {
                   </div>
                   <div className="scenario-card-body">Browse and generate words per scenario.</div>
                 </button>
+                {topicList.map((topic) => {
+                  const count = topicVocabMap[topic]?.entries.length || 0;
+                  return (
+                    <button
+                      key={topic}
+                      type="button"
+                      className="scenario-card"
+                      onClick={() => {
+                        setActiveTopic(topic);
+                        setTopicVocabFlipped({});
+                        setView("topic-detail");
+                      }}
+                    >
+                      <div className="scenario-card-header">
+                        <div className="scenario-card-title">{topic}</div>
+                        <div className="scenario-ring">
+                          <div className="scenario-ring-inner">{count}</div>
+                        </div>
+                      </div>
+                      <div className="scenario-card-body">Custom topic vocabulary.</div>
+                    </button>
+                  );
+                })}
               </div>
             </section>
             <div className="dashboard-header">
@@ -2348,6 +2923,8 @@ export default function Home() {
           scenarioVocabView
         ) : view === "scenario-detail" ? (
           scenarioDetailView
+        ) : view === "topic-detail" ? (
+          topicDetailView
         ) : (
           chatView
         )}
@@ -2439,12 +3016,77 @@ export default function Home() {
         </div>
       ) : null}
 
+      {showTopicModal ? (
+        <div
+          className="vocab-modal-overlay"
+          onClick={() => {
+            setShowTopicModal(false);
+            setTopicInput("");
+          }}
+        >
+          <div className="vocab-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="vocab-modal-header">
+              <div className="vocab-title">New vocabulary topic</div>
+              <button
+                type="button"
+                className="ghost vocab-clear"
+                onClick={() => {
+                  setShowTopicModal(false);
+                  setTopicInput("");
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <div className="vocab-modal-body">
+              <div className="language-add">
+                <input
+                  type="text"
+                  className="language-input"
+                  value={topicInput}
+                  onChange={(event) => setTopicInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      createTopicVocab(topicInput);
+                    }
+                  }}
+                  placeholder="e.g. Travel planning, Fitness, Office work"
+                />
+                <button
+                  type="button"
+                  className="language-save-btn"
+                  onClick={() => createTopicVocab(topicInput)}
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {exampleModal ? (
-        <div className="vocab-modal-overlay" onClick={() => setExampleModal(null)}>
+        <div
+          className="vocab-modal-overlay"
+          onClick={() => {
+            setExampleModal(null);
+            setTooltip(null);
+            activeTargetRef.current = null;
+          }}
+        >
           <div className="vocab-modal" onClick={(event) => event.stopPropagation()}>
             <div className="vocab-modal-header">
               <div className="vocab-title">Examples for {exampleModal.word}</div>
-              <button type="button" className="ghost vocab-clear" onClick={() => setExampleModal(null)}>
+              <button
+                type="button"
+                className="ghost vocab-clear"
+                onClick={() => {
+                  setExampleModal(null);
+                  setTooltip(null);
+                  activeTargetRef.current = null;
+                }}
+              >
                 Close
               </button>
             </div>
@@ -2513,6 +3155,13 @@ export default function Home() {
                   onClick={() => setShowStarredOnly((prev) => !prev)}
                 >
                   {showStarredOnly ? "Show all" : "Starred only"}
+                </button>
+                <button
+                  type="button"
+                  className="ghost vocab-tab"
+                  onClick={() => void archiveChatUnstarred()}
+                >
+                  Archive all but starred
                 </button>
                 <button type="button" className="ghost vocab-clear" onClick={clearVocab}>
                   Clear

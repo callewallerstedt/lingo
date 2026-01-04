@@ -36,6 +36,7 @@ create table if not exists user_vocab (
   starred boolean not null default false,
   count integer not null default 1,
   last_clicked timestamptz not null default now(),
+  archived boolean not null default false,
   created_at timestamptz not null default now(),
   unique (user_id, language, scope, scenario_id, word_key)
 );
@@ -51,6 +52,7 @@ alter table user_vocab add column if not exists translation text;
 alter table user_vocab add column if not exists starred boolean not null default false;
 alter table user_vocab add column if not exists count integer not null default 1;
 alter table user_vocab add column if not exists last_clicked timestamptz not null default now();
+alter table user_vocab add column if not exists archived boolean not null default false;
 alter table user_vocab add column if not exists created_at timestamptz not null default now();
 
 alter table profiles enable row level security;

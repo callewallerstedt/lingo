@@ -505,7 +505,7 @@ textarea:focus {
   border: 1px solid var(--glass-border);
   border-radius: 8px;
   font-size: 12px;
-  z-index: 1000;
+  z-index: 3000;
   box-shadow: var(--shadow);
 }
 
@@ -752,6 +752,7 @@ textarea:focus {
 
 .vocab-card.flipped {
   border-color: var(--accent);
+  border-width: 2px;
   background: rgba(107, 114, 128, 0.08);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
 }
@@ -1450,6 +1451,11 @@ body {
 
 .scenario-card.done {
   border-color: rgba(255, 255, 255, 0.28);
+}
+
+.scenario-card.archived {
+  opacity: 0.5;
+  box-shadow: none;
 }
 
 .scenario-card-header {
