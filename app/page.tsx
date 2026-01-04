@@ -207,6 +207,13 @@ export default function Home() {
   }, [language]);
 
   useEffect(() => {
+    if (!authUser || !language) return;
+    if (languageOptions.length && !languageOptions.includes(language)) {
+      void saveLanguagePreference(language);
+    }
+  }, [authUser, language, languageOptions]);
+
+  useEffect(() => {
     if (!language) return;
     if (authUser) {
       void loadUserVocab(language);
@@ -400,7 +407,12 @@ export default function Home() {
     if (error) {
       await ensureProfile(authUser.email || "user@lingoarc.local", username || "user");
       setLanguageOptions([]);
-      setShowLanguageModal(true);
+      if (language) {
+        await saveLanguagePreference(language);
+        setShowLanguageModal(false);
+      } else {
+        setShowLanguageModal(true);
+      }
       return;
     }
 
@@ -430,7 +442,9 @@ export default function Home() {
       return;
     }
 
-    setShowLanguageModal(true);
+    if (!language) {
+      setShowLanguageModal(true);
+    }
   }
 
   async function saveLanguagePreference(value: string, existing?: string[]) {
