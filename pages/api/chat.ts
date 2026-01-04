@@ -88,6 +88,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const userMessage = (message || "").trim();
+  const isContinue = userMessage === "__AI_CONTINUE__";
   const isStart = Boolean(start) || userMessage.startsWith("__AI_START__");
 
   if (!session.language) {
@@ -162,6 +163,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       skipRecordUser = true;
     }
   }
+  if (isContinue) {
+    skipRecordUser = true;
+  }
 
   if (!skipRecordUser) {
     recordMessage(session, "user", userMessage);
@@ -177,6 +181,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       },
       ...history,
     ];
+    if (isContinue) {
+      messages.push({
+        role: "user",
+        content: [
+          {
+            type: "text" as const,
+            text: "Continue the scene with the next natural step. Keep it concise.",
+          },
+        ],
+      });
+    }
 
     // Set up streaming response
     res.writeHead(200, {

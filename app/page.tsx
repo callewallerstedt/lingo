@@ -89,6 +89,7 @@ export default function Home() {
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [suggestionLoading, setSuggestionLoading] = useState<boolean>(false);
   const [showSuggestionModal, setShowSuggestionModal] = useState<boolean>(false);
+  const [longPressActive, setLongPressActive] = useState<boolean>(false);
 
   const [vocabEntries, setVocabEntries] = useState<VocabEntry[]>([]);
   const [showVocabModal, setShowVocabModal] = useState<boolean>(false);
@@ -118,6 +119,8 @@ export default function Home() {
   const messagesStateRef = useRef<Message[]>([]);
   const activeScenarioRef = useRef<ScenarioDefinition | null>(null);
   const taskRef = useRef<string>("");
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressTriggeredRef = useRef<boolean>(false);
 
   const clientCache = useMemo(() => new Map<string, string>(), []);
 
@@ -732,6 +735,12 @@ export default function Home() {
     setShowTaskModal(true);
   }
 
+  async function manualCompleteTask() {
+    if (taskCompleted || taskChecking) return;
+    setTaskCompleted(true);
+    await handleTaskCompleted();
+  }
+
   async function checkTaskCompletion(snapshot?: Message[]) {
     if (!activeScenarioRef.current || !language || taskChecking || taskCompleted) return;
     if (!taskRef.current) return;
@@ -821,12 +830,14 @@ export default function Home() {
     messageId: string,
     previousAssistant: string,
     attempt: number,
-    sessionOverride?: string
+    sessionOverride?: string,
+    continueDepth = 0
   ) {
     const activeSessionId = sessionOverride || (await ensureChatSession());
     if (!activeSessionId || !activeScenarioRef.current) return;
 
     const isStart = text === "__AI_START__" || text.startsWith("__AI_START__");
+    const isContinue = text === "__AI_CONTINUE__";
 
     try {
       const res = await fetch("/api/chat", {
@@ -874,39 +885,57 @@ export default function Home() {
       }
 
       const decoder = new TextDecoder();
-      let fullResponse = "";
-      const assistantMessageId = makeId();
+    let fullResponse = "";
+    const assistantMessageId = makeId();
 
-      const assistantMessage: Message = { id: assistantMessageId, role: "assistant", content: "" };
-      setMessages((prev) => [...prev, assistantMessage]);
-      messagesStateRef.current = [...messagesStateRef.current, assistantMessage];
+    const assistantMessage: Message = { id: assistantMessageId, role: "assistant", content: "" };
+    setMessages((prev) => [...prev, assistantMessage]);
+    messagesStateRef.current = [...messagesStateRef.current, assistantMessage];
 
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-          const chunk = decoder.decode(value, { stream: true });
-          fullResponse += chunk;
+        const chunk = decoder.decode(value, { stream: true });
+        fullResponse += chunk;
 
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantMessageId
-                ? { ...msg, content: fullResponse }
-                : msg
-            )
-          );
-          messagesStateRef.current = messagesStateRef.current.map((msg) =>
-            msg.id === assistantMessageId ? { ...msg, content: fullResponse } : msg
-          );
-        }
-      } finally {
-        reader.releaseLock();
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId
+              ? { ...msg, content: fullResponse }
+              : msg
+          )
+        );
+        messagesStateRef.current = messagesStateRef.current.map((msg) =>
+          msg.id === assistantMessageId ? { ...msg, content: fullResponse } : msg
+        );
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+      const shouldContinue = fullResponse.includes("[[NEXT]]");
+      const cleanedResponse = fullResponse.replace(/\s*\[\[NEXT\]\]\s*$/g, "").trimEnd();
+      if (cleanedResponse !== fullResponse) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId
+              ? { ...msg, content: cleanedResponse }
+              : msg
+          )
+        );
+        messagesStateRef.current = messagesStateRef.current.map((msg) =>
+          msg.id === assistantMessageId ? { ...msg, content: cleanedResponse } : msg
+        );
       }
 
       if (!isStart) {
         void requestFeedback(activeSessionId, messageId, text, previousAssistant);
         void checkTaskCompletion(messagesStateRef.current);
+        if (shouldContinue && !isContinue && continueDepth < 1) {
+          void sendMessageWithRetry("__AI_CONTINUE__", makeId(), "", 0, activeSessionId, continueDepth + 1);
+        }
       }
     } catch {
       setMessages((prev) => [
@@ -979,6 +1008,34 @@ export default function Home() {
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
+  }
+
+  function handleSendPointerDown() {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+    }
+    longPressTriggeredRef.current = false;
+    setLongPressActive(true);
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      setLongPressActive(false);
+      void manualCompleteTask();
+    }, 2000);
+  }
+
+  function handleSendPointerUp() {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+    }
+    setLongPressActive(false);
+  }
+
+  function handleSendClick() {
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      return;
+    }
+    void sendMessage();
   }
 
   function renderAssistantContent(text: string) {
@@ -1936,8 +1993,16 @@ export default function Home() {
           rows={1}
           placeholder="Type your message"
         />
-        <button type="button" className="solid" onClick={sendMessage}>
-          Send
+        <button
+          type="button"
+          className={`solid ${longPressActive ? "pressing" : ""}`}
+          onClick={handleSendClick}
+          onPointerDown={handleSendPointerDown}
+          onPointerUp={handleSendPointerUp}
+          onPointerLeave={handleSendPointerUp}
+          onPointerCancel={handleSendPointerUp}
+        >
+          {longPressActive ? "Hold to complete" : "Send"}
         </button>
       </footer>
     </section>

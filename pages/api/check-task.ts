@@ -33,7 +33,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           text: [
             "You are a strict evaluator of task completion in a roleplay chat.",
             "Decide if the user has fully completed the task based on the conversation.",
-            "The task must be fully completed; partial attempts are not enough.",
+            "Be practical: if the user clearly completed the task intent, return true.",
+            "Minor grammar mistakes do not prevent completion.",
             "Return only JSON: {\"completed\": true|false}.",
             "No extra text.",
           ].join(" "),
