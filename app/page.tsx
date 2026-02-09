@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import type { Difficulty } from "../lib/store";
-import { supabase } from "../lib/supabaseClient";
+import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { SCENARIOS, type ScenarioDefinition } from "../lib/scenarios";
 
 const TASKS_PER_SCENARIO = 10;
@@ -329,21 +329,51 @@ export default function Home() {
   }, [authUser, language]);
 
   useEffect(() => {
-    const loadAuth = async () => {
-      const { data } = await supabase.auth.getSession();
-      setAuthUser(data.session?.user ?? null);
+    if (!isSupabaseConfigured) {
       setAuthLoading(false);
+      setAuthError("Missing Supabase config. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel.");
+      return;
+    }
+
+    let unsubscribe: (() => void) | null = null;
+    let isMounted = true;
+    const authTimeout = window.setTimeout(() => {
+      if (!isMounted) return;
+      setAuthLoading(false);
+      setAuthError((prev) => prev || "Authentication timed out. Supabase may still be waking up. Refresh and try again.");
+    }, 12000);
+
+    const clearAuthTimeout = () => window.clearTimeout(authTimeout);
+
+    const loadAuth = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!isMounted) return;
+        setAuthUser(data.session?.user ?? null);
+      } catch {
+        if (!isMounted) return;
+        setAuthError("Failed to initialize authentication. Check your Supabase environment variables.");
+      } finally {
+        clearAuthTimeout();
+        if (!isMounted) return;
+        setAuthLoading(false);
+      }
     };
 
     void loadAuth();
 
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      clearAuthTimeout();
+      if (!isMounted) return;
       setAuthUser(session?.user ?? null);
       setAuthLoading(false);
     });
+    unsubscribe = () => data.subscription.unsubscribe();
 
     return () => {
-      data.subscription.unsubscribe();
+      isMounted = false;
+      clearAuthTimeout();
+      unsubscribe?.();
     };
   }, []);
 
@@ -431,6 +461,10 @@ export default function Home() {
 
   async function handleLogin() {
     setAuthError(null);
+    if (!isSupabaseConfigured) {
+      setAuthError("Missing Supabase config. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel.");
+      return;
+    }
     if (!username || !password) {
       setAuthError("Enter username and password.");
       return;
