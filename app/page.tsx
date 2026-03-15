@@ -58,6 +58,8 @@ type SuggestionPayload = {
   suggestion: string;
 };
 
+type VocabScope = "chat" | "common" | "scenario" | "topic";
+
 export default function Home() {
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
@@ -117,10 +119,12 @@ export default function Home() {
   const [topicInput, setTopicInput] = useState<string>("");
   const [exampleMap, setExampleMap] = useState<Record<string, string[]>>({});
   const [exampleLoading, setExampleLoading] = useState<Record<string, boolean>>({});
+  const [speechLoadingKey, setSpeechLoadingKey] = useState<string | null>(null);
+  const [speechPlayingKey, setSpeechPlayingKey] = useState<string | null>(null);
   const [exampleModal, setExampleModal] = useState<{
     word: string;
     lines: string[];
-    scope: "chat" | "common" | "scenario" | "topic";
+    scope: VocabScope;
     scenarioId?: string | null;
   } | null>(null);
   const [scenarioVocabMap, setScenarioVocabMap] = useState<Record<string, StudyPack>>({});
@@ -147,6 +151,8 @@ export default function Home() {
   const longPressTriggeredRef = useRef<boolean>(false);
   const archiveTimerRef = useRef<number | null>(null);
   const archiveTriggeredRef = useRef<boolean>(false);
+  const speechCacheRef = useRef<Map<string, string>>(new Map());
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const clientCache = useMemo(() => new Map<string, string>(), []);
 
@@ -207,6 +213,17 @@ export default function Home() {
     if (savedUsername) {
       setUsername(savedUsername);
     }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+      }
+      speechCacheRef.current.forEach((url) => URL.revokeObjectURL(url));
+      speechCacheRef.current.clear();
+    };
   }, []);
 
   useEffect(() => {
@@ -1807,12 +1824,79 @@ export default function Home() {
     return { merged, added };
   }
 
-  function exampleKey(scope: "chat" | "common" | "scenario" | "topic", word: string, scenarioId?: string | null) {
+  function exampleKey(scope: VocabScope, word: string, scenarioId?: string | null) {
     const base = normalizeWord(word) || word.toLowerCase();
     return `${scope}:${scenarioId || "none"}:${base}`;
   }
 
-  async function generateExamples(scope: "chat" | "common" | "scenario" | "topic", word: string, scenarioId?: string | null) {
+  function speechKey(scope: VocabScope, word: string, scenarioId?: string | null) {
+    const base = normalizeWord(word) || word.toLowerCase();
+    return `${language || "none"}:${scope}:${scenarioId || "none"}:${base}`;
+  }
+
+  async function playFlashcardAudio(scope: VocabScope, word: string, scenarioId?: string | null) {
+    const trimmedWord = word.trim();
+    if (!language || !trimmedWord) return;
+
+    const key = speechKey(scope, trimmedWord, scenarioId);
+    if (speechLoadingKey === key) return;
+
+    const audio = audioRef.current ?? new Audio();
+    audioRef.current = audio;
+
+    if (speechPlayingKey === key) {
+      audio.pause();
+      audio.currentTime = 0;
+      setSpeechPlayingKey(null);
+      return;
+    }
+
+    if (!audio.paused) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+
+    let audioUrl = speechCacheRef.current.get(key);
+
+    if (!audioUrl) {
+      setSpeechLoadingKey(key);
+      try {
+        const res = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ language, text: trimmedWord }),
+        });
+
+        if (!res.ok) return;
+
+        const blob = await res.blob();
+        if (!blob.size) return;
+
+        audioUrl = URL.createObjectURL(blob);
+        speechCacheRef.current.set(key, audioUrl);
+      } finally {
+        setSpeechLoadingKey((current) => (current === key ? null : current));
+      }
+    }
+
+    if (!audioUrl) return;
+
+    audio.onended = () => {
+      setSpeechPlayingKey((current) => (current === key ? null : current));
+    };
+
+    audio.src = audioUrl;
+    audio.currentTime = 0;
+    setSpeechPlayingKey(key);
+
+    try {
+      await audio.play();
+    } catch {
+      setSpeechPlayingKey((current) => (current === key ? null : current));
+    }
+  }
+
+  async function generateExamples(scope: VocabScope, word: string, scenarioId?: string | null) {
     if (!language) return;
     const key = exampleKey(scope, word, scenarioId);
     const cached = exampleMap[key];
@@ -2407,6 +2491,9 @@ export default function Home() {
                     const frontText = studyFront === "word" ? entry.word : entry.translation;
                     const backText = studyFront === "word" ? entry.translation : entry.word;
                     const key = exampleKey("common", entry.word);
+                    const pronunciationKey = speechKey("common", entry.word);
+                    const speechActive =
+                      speechPlayingKey === pronunciationKey || speechLoadingKey === pronunciationKey;
                     const holdId = `common-${index}`;
                     // examples are shown in a modal
                     return (
@@ -2438,6 +2525,27 @@ export default function Home() {
                                 <path
                                   d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
                                   fill="currentColor"
+                                />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              className={`vocab-card-icon ${speechActive ? "active" : ""}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void playFlashcardAudio("common", entry.word);
+                              }}
+                              aria-label={speechLoadingKey === pronunciationKey ? "Loading pronunciation" : "Pronounce"}
+                              title={speechLoadingKey === pronunciationKey ? "Loading pronunciation" : "Pronounce"}
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path
+                                  d="M5 14h3l4 4V6L8 10H5zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
                                 />
                               </svg>
                             </button>
@@ -2675,6 +2783,9 @@ export default function Home() {
               const frontText = scenarioVocabFront === "word" ? entry.word : entry.translation;
               const backText = scenarioVocabFront === "word" ? entry.translation : entry.word;
               const key = exampleKey("scenario", entry.word, activeScenarioVocab.id);
+              const pronunciationKey = speechKey("scenario", entry.word, activeScenarioVocab.id);
+              const speechActive =
+                speechPlayingKey === pronunciationKey || speechLoadingKey === pronunciationKey;
               const holdId = `scenario-${activeScenarioVocab.id}-${index}`;
               // examples are shown in a modal
               return (
@@ -2706,6 +2817,27 @@ export default function Home() {
                           <path
                             d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
                             fill="currentColor"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className={`vocab-card-icon ${speechActive ? "active" : ""}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void playFlashcardAudio("scenario", entry.word, activeScenarioVocab.id);
+                        }}
+                        aria-label={speechLoadingKey === pronunciationKey ? "Loading pronunciation" : "Pronounce"}
+                        title={speechLoadingKey === pronunciationKey ? "Loading pronunciation" : "Pronounce"}
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M5 14h3l4 4V6L8 10H5zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
                           />
                         </svg>
                       </button>
@@ -2900,6 +3032,9 @@ export default function Home() {
               const flipped = Boolean(topicVocabFlipped[index]);
               const frontText = topicVocabFront === "word" ? entry.word : entry.translation;
               const backText = topicVocabFront === "word" ? entry.translation : entry.word;
+              const pronunciationKey = speechKey("topic", entry.word, activeTopic);
+              const speechActive =
+                speechPlayingKey === pronunciationKey || speechLoadingKey === pronunciationKey;
               const holdId = `topic-${activeTopic}-${index}`;
               return (
                 <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
@@ -2930,6 +3065,27 @@ export default function Home() {
                           <path
                             d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
                             fill="currentColor"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className={`vocab-card-icon ${speechActive ? "active" : ""}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void playFlashcardAudio("topic", entry.word, activeTopic);
+                        }}
+                        aria-label={speechLoadingKey === pronunciationKey ? "Loading pronunciation" : "Pronounce"}
+                        title={speechLoadingKey === pronunciationKey ? "Loading pronunciation" : "Pronounce"}
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M5 14h3l4 4V6L8 10H5zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
                           />
                         </svg>
                       </button>
@@ -3571,6 +3727,9 @@ export default function Home() {
                       const frontText = vocabFront === "word" ? entry.word : entry.translation;
                       const backText = vocabFront === "word" ? entry.translation : entry.word;
                       const key = exampleKey("chat", entry.word);
+                      const pronunciationKey = speechKey("chat", entry.word);
+                      const speechActive =
+                        speechPlayingKey === pronunciationKey || speechLoadingKey === pronunciationKey;
                       const holdId = `chat-${entry.key}`;
                       // examples are shown in a modal
                       return (
@@ -3602,6 +3761,27 @@ export default function Home() {
                                   <path
                                     d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
                                     fill="currentColor"
+                                  />
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
+                                className={`vocab-card-icon ${speechActive ? "active" : ""}`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void playFlashcardAudio("chat", entry.word);
+                                }}
+                                aria-label={speechLoadingKey === pronunciationKey ? "Loading pronunciation" : "Pronounce"}
+                                title={speechLoadingKey === pronunciationKey ? "Loading pronunciation" : "Pronounce"}
+                              >
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                  <path
+                                    d="M5 14h3l4 4V6L8 10H5zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
                                   />
                                 </svg>
                               </button>

@@ -1,5 +1,6 @@
 export const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 export const TRANSLATION_MODEL = "gpt-4o-mini";
+export const TTS_MODEL = process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts";
 
 export async function callOpenAI(messages: Array<{ role: string; content: Array<{ type: "text"; text: string }> }>) {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -128,4 +129,41 @@ export async function* callOpenAIStreaming(messages: Array<{ role: string; conte
   } finally {
     reader.releaseLock();
   }
+}
+
+export async function callOpenAITTS({
+  input,
+  voice = "alloy",
+  instructions,
+}: {
+  input: string;
+  voice?: string;
+  instructions?: string;
+}) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing OPENAI_API_KEY");
+  }
+
+  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: TTS_MODEL,
+      voice,
+      input,
+      instructions,
+      response_format: "mp3",
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OpenAI TTS error: ${response.status} ${text}`);
+  }
+
+  return response.arrayBuffer();
 }
