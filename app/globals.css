@@ -1416,6 +1416,11 @@ body {
   line-height: 1.5;
 }
 
+.dashboard-path-card .dashboard-path-copy,
+.dashboard-path-card .dashboard-path-badge {
+  color: var(--muted);
+}
+
 .dashboard-hero-actions,
 .dashboard-recommend-actions {
   display: flex;
@@ -1534,6 +1539,7 @@ body {
   padding: 14px;
   border-radius: 8px;
   background: var(--card-bg);
+  color: var(--ink);
   box-shadow: var(--shadow);
   backdrop-filter: blur(24px);
 }
@@ -1553,6 +1559,7 @@ body {
 .dashboard-group-title {
   font-size: 16px;
   font-weight: 600;
+  color: var(--ink);
 }
 
 .dashboard-path-badge,
@@ -2184,22 +2191,22 @@ body[data-theme="dark"] {
 }
 
 body[data-theme="light"] {
-  --bg: #fffaf4;
-  --surface: rgba(255, 255, 255, 0.82);
-  --surface-2: rgba(255, 247, 244, 0.92);
-  --surface-3: rgba(255, 239, 242, 0.9);
-  --card-bg: rgba(255, 255, 255, 0.84);
-  --card-bg-strong: rgba(255, 250, 246, 0.96);
-  --card-highlight: rgba(255, 202, 212, 0.32);
-  --ink: #2c2430;
-  --muted: #776d78;
-  --accent: #d7879d;
-  --bubble-right: rgba(255, 216, 224, 0.62);
-  --bubble-right-text: #382a37;
+  --bg: #fff6ee;
+  --surface: rgba(255, 255, 255, 0.9);
+  --surface-2: rgba(255, 245, 238, 0.96);
+  --surface-3: rgba(255, 228, 236, 0.96);
+  --card-bg: rgba(255, 255, 255, 0.92);
+  --card-bg-strong: rgba(255, 244, 236, 0.98);
+  --card-highlight: rgba(255, 176, 198, 0.46);
+  --ink: #281d26;
+  --muted: #6e5f6a;
+  --accent: #d95f86;
+  --bubble-right: rgba(255, 198, 214, 0.78);
+  --bubble-right-text: #321f2b;
   --border: transparent;
-  --glass-bg: rgba(255, 255, 255, 0.8);
+  --glass-bg: rgba(255, 255, 255, 0.88);
   --glass-border: transparent;
-  --shadow: 0 18px 40px rgba(225, 198, 206, 0.26);
+  --shadow: 0 20px 42px rgba(223, 167, 183, 0.34);
 }
 
 body {
