@@ -2614,38 +2614,46 @@ export default function Home() {
 
     const scheduleThock = () => {
       const start = context.currentTime;
-
       const master = context.createGain();
       master.gain.setValueAtTime(0.0001, start);
-      master.gain.exponentialRampToValueAtTime(0.36, start + 0.005);
-      master.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+      master.gain.exponentialRampToValueAtTime(0.26, start + 0.002);
+      master.gain.exponentialRampToValueAtTime(0.0001, start + 0.07);
       master.connect(context.destination);
 
+      const noiseBuffer = context.createBuffer(1, Math.floor(context.sampleRate * 0.04), context.sampleRate);
+      const channel = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < channel.length; i += 1) {
+        channel[i] = (Math.random() * 2 - 1) * (1 - i / channel.length);
+      }
+
+      const noise = context.createBufferSource();
+      noise.buffer = noiseBuffer;
+      const noiseFilter = context.createBiquadFilter();
+      noiseFilter.type = "lowpass";
+      noiseFilter.frequency.setValueAtTime(900, start);
+      noiseFilter.Q.value = 0.7;
+      const noiseGain = context.createGain();
+      noiseGain.gain.setValueAtTime(0.0001, start);
+      noiseGain.gain.exponentialRampToValueAtTime(0.65, start + 0.0015);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.035);
+      noise.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(master);
+      noise.start(start);
+      noise.stop(start + 0.04);
+
       const body = context.createOscillator();
-      body.type = "triangle";
-      body.frequency.setValueAtTime(108, start);
-      body.frequency.exponentialRampToValueAtTime(68, start + 0.13);
+      body.type = "sine";
+      body.frequency.setValueAtTime(120, start);
+      body.frequency.exponentialRampToValueAtTime(74, start + 0.05);
       const bodyGain = context.createGain();
       bodyGain.gain.setValueAtTime(0.0001, start);
-      bodyGain.gain.exponentialRampToValueAtTime(0.7, start + 0.006);
-      bodyGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.14);
+      bodyGain.gain.exponentialRampToValueAtTime(0.18, start + 0.002);
+      bodyGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.05);
       body.connect(bodyGain);
       bodyGain.connect(master);
       body.start(start);
-      body.stop(start + 0.15);
-
-      const knock = context.createOscillator();
-      knock.type = "square";
-      knock.frequency.setValueAtTime(190, start);
-      knock.frequency.exponentialRampToValueAtTime(118, start + 0.028);
-      const knockGain = context.createGain();
-      knockGain.gain.setValueAtTime(0.0001, start);
-      knockGain.gain.exponentialRampToValueAtTime(0.2, start + 0.003);
-      knockGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.05);
-      knock.connect(knockGain);
-      knockGain.connect(master);
-      knock.start(start);
-      knock.stop(start + 0.055);
+      body.stop(start + 0.055);
     };
 
     if (context.state === "suspended") {
