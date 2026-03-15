@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import type { NextApiRequest, NextApiResponse } from "next";
 import { callOpenAI } from "../../lib/openai";
 import { normalizeSurgeKey } from "../../lib/surge";
 
@@ -72,15 +71,53 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const reply = await callOpenAI(prompt);
-    let parsed: { items?: Array<{ text?: string; translation?: string; itemType?: "word" | "phrase" }> } | null = null;
+    let parsed:
+      | {
+          items?: Array<{
+            text?: string;
+            word?: string;
+            phrase?: string;
+            translation?: string;
+            meaning?: string;
+            english?: string;
+            itemType?: "word" | "phrase";
+            item_type?: "word" | "phrase";
+            type?: "word" | "phrase";
+          }>;
+        }
+      | null = null;
     try {
-      parsed = JSON.parse(reply) as { items?: Array<{ text?: string; translation?: string; itemType?: "word" | "phrase" }> };
+      parsed = JSON.parse(reply) as {
+        items?: Array<{
+          text?: string;
+          word?: string;
+          phrase?: string;
+          translation?: string;
+          meaning?: string;
+          english?: string;
+          itemType?: "word" | "phrase";
+          item_type?: "word" | "phrase";
+          type?: "word" | "phrase";
+        }>;
+      };
     } catch {
       const start = reply.indexOf("{");
       const end = reply.lastIndexOf("}");
       if (start !== -1 && end !== -1 && end > start) {
         try {
-          parsed = JSON.parse(reply.slice(start, end + 1)) as { items?: Array<{ text?: string; translation?: string; itemType?: "word" | "phrase" }> };
+          parsed = JSON.parse(reply.slice(start, end + 1)) as {
+            items?: Array<{
+              text?: string;
+              word?: string;
+              phrase?: string;
+              translation?: string;
+              meaning?: string;
+              english?: string;
+              itemType?: "word" | "phrase";
+              item_type?: "word" | "phrase";
+              type?: "word" | "phrase";
+            }>;
+          };
         } catch {
           parsed = null;
         }
@@ -92,14 +129,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const cleaned: SurgeApiItem[] = [];
 
     for (const item of items) {
-      const text = typeof item?.text === "string" ? item.text.trim() : "";
-      const translation = typeof item?.translation === "string" ? item.translation.trim() : "";
-      const itemType = item?.itemType === "phrase" ? "phrase" : "word";
+      const textSource =
+        typeof item?.text === "string"
+          ? item.text
+          : typeof item?.word === "string"
+            ? item.word
+            : typeof item?.phrase === "string"
+              ? item.phrase
+              : "";
+      const translationSource =
+        typeof item?.translation === "string"
+          ? item.translation
+          : typeof item?.meaning === "string"
+            ? item.meaning
+            : typeof item?.english === "string"
+              ? item.english
+              : "";
+      const text = textSource.trim();
+      const translation = translationSource.trim();
+      const inferredType =
+        item?.itemType === "phrase" || item?.item_type === "phrase" || item?.type === "phrase"
+          ? "phrase"
+          : text.includes(" ")
+            ? "phrase"
+            : "word";
+      const itemType = inferredType;
       const itemKey = normalizeSurgeKey(text);
       if (!text || !translation || !itemKey || seen.has(itemKey)) continue;
       seen.add(itemKey);
       cleaned.push({ text, translation, itemType, itemKey });
       if (cleaned.length >= safeCount) break;
+    }
+
+    if (!cleaned.length) {
+      console.error("Surge items parsed empty:", reply);
     }
 
     res.json({ items: cleaned });

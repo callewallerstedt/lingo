@@ -2149,14 +2149,23 @@ export default function Home() {
     });
 
     if (!res.ok) {
-      return [];
+      let message = "Failed to load Surge items.";
+      try {
+        const data = (await res.json()) as { error?: string };
+        if (typeof data?.error === "string" && data.error.trim()) {
+          message = data.error.trim();
+        }
+      } catch {
+        // Ignore parse errors and keep fallback message.
+      }
+      throw new Error(message);
     }
 
     const data = (await res.json()) as {
       items?: Array<{ text: string; translation: string; itemType: "word" | "phrase"; itemKey: string }>;
     };
 
-    return dedupeSurgeItems(
+    const cleaned = dedupeSurgeItems(
       Array.isArray(data.items)
         ? data.items
             .filter(
@@ -2174,12 +2183,17 @@ export default function Home() {
             }))
         : []
     );
+
+    if (!cleaned.length) {
+      throw new Error("Surge did not receive any usable study items.");
+    }
+
+    return cleaned;
   }
 
   async function ensureSurgeReserve(session: SurgeSession) {
     if (session.reserve.length >= 5) return session;
     const fetched = await fetchSurgeBatch(session, 10);
-    if (!fetched.length) return session;
     const usedKeys = getSurgeUsedKeys(session);
     const mergedReserve = dedupeSurgeItems([
       ...session.reserve,
@@ -2294,6 +2308,12 @@ export default function Home() {
         return;
       }
       setSurgeSession(nextSession);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : "Surge could not load new items right now.";
+      setSurgeError(message);
     } finally {
       setSurgeLoading(false);
     }
@@ -2335,7 +2355,6 @@ export default function Home() {
       ...nextSession,
       previewRevealed: true,
     });
-    void playFlashcardAudio("surge", current.text);
   }
 
   async function advanceSurgePreview() {
