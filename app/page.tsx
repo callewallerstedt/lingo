@@ -2358,6 +2358,18 @@ export default function Home() {
     });
   }
 
+  async function toggleSurgePreview() {
+    if (!surgeSession) return;
+    if (surgeSession.previewRevealed) {
+      setSurgeSession({
+        ...surgeSession,
+        previewRevealed: false,
+      });
+      return;
+    }
+    await revealSurgePreview();
+  }
+
   async function advanceSurgePreview() {
     if (!surgeSession) return;
     const isLast = surgeSession.previewIndex >= surgeSession.activeRound.length - 1;
@@ -3160,16 +3172,12 @@ export default function Home() {
             type="button"
             className={`surge-card ${surgeSession.previewRevealed ? "revealed" : ""}`}
             onClick={() => {
-              if (!surgeSession.previewRevealed) {
-                void revealSurgePreview();
-              }
+              void toggleSurgePreview();
             }}
             onKeyDown={(event) => {
               if (event.key === " " || event.key === "Enter") {
                 event.preventDefault();
-                if (!surgeSession.previewRevealed) {
-                  void revealSurgePreview();
-                }
+                void toggleSurgePreview();
               }
             }}
           >
@@ -3204,6 +3212,24 @@ export default function Home() {
             >
               {surgeSession.previewRevealed ? "Next" : "Reveal"}
             </button>
+            {surgeSession.previewRevealed ? (
+              <button
+                type="button"
+                className="ghost"
+                onClick={() =>
+                  setSurgeSession((current) =>
+                    current
+                      ? {
+                          ...current,
+                          previewRevealed: false,
+                        }
+                      : current
+                  )
+                }
+              >
+                Hide
+              </button>
+            ) : null}
           </div>
         </div>
       ) : surgeSession.phase === "match" ? (

@@ -2537,10 +2537,15 @@ textarea {
   align-content: center;
   gap: 10px;
   text-align: center;
+  transition: transform 0.18s ease, background 0.22s ease, box-shadow 0.22s ease;
 }
 
 .surge-card {
   cursor: pointer;
+}
+
+.surge-card:hover {
+  transform: translateY(-1px);
 }
 
 .surge-card-label {
@@ -2566,6 +2571,10 @@ textarea {
 
 .surge-card.revealed .surge-card-word {
   color: var(--ink);
+}
+
+.surge-card.revealed {
+  background: color-mix(in srgb, var(--card-bg-strong) 88%, var(--card-highlight) 12%);
 }
 
 .surge-actions {
@@ -2598,15 +2607,33 @@ textarea {
   background: var(--surface-2);
   color: var(--ink);
   min-height: 64px;
+  position: relative;
+  transition: transform 0.16s ease, background 0.2s ease, opacity 0.2s ease, box-shadow 0.2s ease;
 }
 
 .surge-match-card.selected {
   background: var(--card-highlight);
+  transform: translateY(-1px) scale(1.01);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12);
 }
 
 .surge-match-card.matched {
-  opacity: 0.35;
-  text-decoration: line-through;
+  background: color-mix(in srgb, #7dd3a7 38%, var(--surface-2) 62%);
+  color: #113222;
+  animation: surge-match-pop 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+  box-shadow: 0 10px 24px rgba(82, 192, 120, 0.22);
+}
+
+.surge-match-card.matched::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #2fb065;
+  box-shadow: 0 0 0 5px rgba(47, 176, 101, 0.14);
 }
 
 .surge-typing {
@@ -2653,6 +2680,18 @@ textarea {
   font-size: 12px;
   color: var(--muted);
   text-align: right;
+}
+
+@keyframes surge-match-pop {
+  0% {
+    transform: scale(0.96);
+  }
+  55% {
+    transform: scale(1.04);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 @media (max-width: 720px) {
