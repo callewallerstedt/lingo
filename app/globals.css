@@ -1804,6 +1804,30 @@ body {
   background: transparent;
 }
 
+.buddy-shell {
+  grid-template-rows: auto auto 1fr auto;
+}
+
+.buddy-banner {
+  gap: 10px;
+}
+
+.buddy-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.buddy-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.buddy-chip {
+  min-width: 0;
+}
+
 .task-label {
   text-transform: uppercase;
   letter-spacing: 0.2em;

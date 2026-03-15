@@ -79,11 +79,25 @@ type SuggestionPayload = {
 type VocabScope = "chat" | "common" | "scenario" | "topic" | "surge" | "example";
 type ExampleScope = "chat" | "common" | "scenario" | "topic";
 type ThemeMode = "dark" | "light";
+type ChatMode = "scenario" | "buddy";
 
 type ExampleItem = {
   label: string;
   sentence: string;
   translation: string;
+};
+
+type BuddyProfileSnapshot = {
+  summary: string;
+  knownItems: string[];
+  learningItems: string[];
+  recentItems: string[];
+  scenarioProgress: string[];
+  knownCount: number;
+  learningCount: number;
+  recentCount: number;
+  dueCount: number;
+  masteredCount: number;
 };
 
 export default function Home() {
@@ -114,6 +128,7 @@ export default function Home() {
   const [taskCompleted, setTaskCompleted] = useState<boolean>(false);
   const [showTaskModal, setShowTaskModal] = useState<boolean>(false);
   const [rewardPoints, setRewardPoints] = useState<number>(0);
+  const [chatMode, setChatMode] = useState<ChatMode>("scenario");
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -180,6 +195,8 @@ export default function Home() {
   const ignoreWindowClickRef = useRef<boolean>(false);
   const messagesStateRef = useRef<Message[]>([]);
   const activeScenarioRef = useRef<ScenarioDefinition | null>(null);
+  const chatModeRef = useRef<ChatMode>("scenario");
+  const buddyProfileRef = useRef<BuddyProfileSnapshot | null>(null);
   const taskRef = useRef<string>("");
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef<boolean>(false);
@@ -279,8 +296,139 @@ export default function Home() {
   }, [activeScenario]);
 
   useEffect(() => {
+    chatModeRef.current = chatMode;
+  }, [chatMode]);
+
+  useEffect(() => {
     taskRef.current = taskText;
   }, [taskText]);
+
+  function formatBuddyFocusItem(text: string, translation: string) {
+    const nextText = text.trim();
+    const nextTranslation = translation.trim();
+    if (!nextText) return "";
+    return nextTranslation ? `${nextText} = ${nextTranslation}` : nextText;
+  }
+
+  function pushBuddyUnique(items: string[], value: string) {
+    const nextValue = value.trim();
+    if (!nextValue || items.includes(nextValue)) {
+      return;
+    }
+    items.push(nextValue);
+  }
+
+  const buddyProfileSnapshot = useMemo<BuddyProfileSnapshot>(() => {
+    const knownItems: string[] = [];
+    const learningItems: string[] = [];
+    const recentItems: string[] = [];
+    const scenarioProgress = SCENARIOS
+      .map((scenario) => ({
+        title: scenario.title,
+        count: progressMap[scenario.id] || 0,
+      }))
+      .filter((entry) => entry.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .map((entry) => `${entry.title} ${entry.count}/${TASKS_PER_SCENARIO}`)
+      .slice(0, 6);
+
+    const surgeRecords = Object.values(surgeProgressMap).sort((a, b) => {
+      const aScore = (a.status === "known" ? 100 : 0) + a.stage;
+      const bScore = (b.status === "known" ? 100 : 0) + b.stage;
+      return bScore - aScore;
+    });
+
+    surgeRecords.forEach((record) => {
+      const formatted = formatBuddyFocusItem(record.itemText, record.translation);
+      if (!formatted) return;
+      if (record.status === "known" || record.stage >= 6) {
+        pushBuddyUnique(knownItems, formatted);
+        return;
+      }
+      pushBuddyUnique(learningItems, formatted);
+    });
+
+    const savedEntries: Array<StudyEntry | VocabEntry> = [
+      ...vocabEntries.filter((entry) => !entry.archived),
+      ...(studyPack?.entries.filter((entry) => !entry.archived) ?? []),
+      ...Object.values(scenarioVocabMap).flatMap((pack) => pack.entries.filter((entry) => !entry.archived)),
+      ...Object.values(topicVocabMap).flatMap((pack) => pack.entries.filter((entry) => !entry.archived)),
+    ];
+
+    savedEntries.forEach((entry) => {
+      const formatted = formatBuddyFocusItem(entry.word, entry.translation);
+      if (!formatted) return;
+      if (entry.starred) {
+        pushBuddyUnique(knownItems, formatted);
+        return;
+      }
+      pushBuddyUnique(learningItems, formatted);
+    });
+
+    dedupeSurgeItems([
+      ...(surgeSession?.activeRound ?? []),
+      ...(surgeSession?.reviewQueue ?? []),
+      ...(surgeSession?.typingQueue ?? []),
+      ...((surgeSession?.delayedReviewQueue ?? []).map((entry) => entry.item)),
+    ]).forEach((item) => {
+      pushBuddyUnique(recentItems, formatBuddyFocusItem(item.text, item.translation));
+    });
+
+    (surgeSession?.recentlySeen ?? []).forEach((itemKey) => {
+      const record = surgeProgressMap[itemKey];
+      if (!record) return;
+      pushBuddyUnique(recentItems, formatBuddyFocusItem(record.itemText, record.translation));
+    });
+
+    const dueCount = surgeRecords.filter(
+      (record) => record.status !== "known" && Boolean(record.nextReviewAt) && (record.nextReviewAt || 0) <= Date.now()
+    ).length;
+    const masteredCount = surgeRecords.filter(
+      (record) => record.status === "known" || record.stage >= 6
+    ).length;
+
+    const summary = [
+      `Learner: ${profileName || username || "Learner"}.`,
+      language ? `Target language: ${language}.` : "",
+      difficulty ? `Difficulty: ${difficulty}.` : "",
+      knownItems.length ? `Strong items: ${knownItems.slice(0, 12).join("; ")}.` : "Strong items: none marked strong yet.",
+      learningItems.length ? `Current learning items: ${learningItems.slice(0, 14).join("; ")}.` : "Current learning items: just getting started.",
+      recentItems.length ? `Recently practiced: ${recentItems.slice(0, 8).join("; ")}.` : "",
+      scenarioProgress.length ? `Scenario progress: ${scenarioProgress.join("; ")}.` : "",
+      `Surge due now: ${dueCount}. Surge mastered: ${masteredCount}.`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    return {
+      summary,
+      knownItems: knownItems.slice(0, 16),
+      learningItems: learningItems.slice(0, 20),
+      recentItems: recentItems.slice(0, 10),
+      scenarioProgress,
+      knownCount: knownItems.length,
+      learningCount: learningItems.length,
+      recentCount: recentItems.length,
+      dueCount,
+      masteredCount,
+    };
+  }, [
+    difficulty,
+    language,
+    profileName,
+    progressMap,
+    scenarioVocabMap,
+    studyPack,
+    surgeProgressMap,
+    surgeSession,
+    topicVocabMap,
+    username,
+    vocabEntries,
+  ]);
+
+  useEffect(() => {
+    buddyProfileRef.current = buddyProfileSnapshot;
+  }, [buddyProfileSnapshot]);
 
   useEffect(() => {
     localStorage.setItem("lingoarc_vocab", JSON.stringify(vocabEntries));
@@ -1057,13 +1205,17 @@ export default function Home() {
     }
 
     clientCache.clear();
+    setChatMode("scenario");
+    chatModeRef.current = "scenario";
     setView("chat");
     setActiveScenario(scenario);
+    activeScenarioRef.current = scenario;
     setMessages([]);
     messagesStateRef.current = [];
     setInputValue("");
     setSuggestion(null);
     setShowSuggestionModal(false);
+    setShowTaskModal(false);
     setTaskCompleted(false);
     setTaskText("");
     setRewardPoints(0);
@@ -1083,13 +1235,61 @@ export default function Home() {
         sessionId: session,
         language,
         difficulty,
+        chatMode: "scenario",
         scenarioPreset: scenario.title,
         scenarioCustom: scenario.subtitle,
         scenarioRole: scenario.roleGuide,
         scenarioStart: scenario.startPrompt,
         task: taskValue,
+        buddyContext: "",
       }),
     });
+
+    setTimeout(() => {
+      sendMessageWithRetry("__AI_START__", makeId(), "", 0, session);
+    }, 150);
+  }
+
+  async function startBuddyChat(forceNew = false) {
+    if (!authUser) return;
+    if (!language) {
+      setAuthError("Choose a language before opening Buddy.");
+      return;
+    }
+
+    const hasExistingBuddy =
+      chatModeRef.current === "buddy" &&
+      Boolean(sessionId) &&
+      messagesStateRef.current.length > 0;
+
+    setChatMode("buddy");
+    chatModeRef.current = "buddy";
+    setView("chat");
+    setActiveScenario(null);
+    activeScenarioRef.current = null;
+    setSuggestion(null);
+    setShowSuggestionModal(false);
+    setShowTaskModal(false);
+    setTaskCompleted(false);
+    setTaskText("");
+    setRewardPoints(0);
+    setAuthError(null);
+
+    if (!forceNew && hasExistingBuddy && sessionId) {
+      await syncSessionContext(sessionId, "buddy");
+      return;
+    }
+
+    clientCache.clear();
+    setMessages([]);
+    messagesStateRef.current = [];
+    setInputValue("");
+    setSessionId(null);
+
+    const session = await createSession();
+    if (!session) return;
+
+    await syncSessionContext(session, "buddy");
 
     setTimeout(() => {
       sendMessageWithRetry("__AI_START__", makeId(), "", 0, session);
@@ -1107,8 +1307,31 @@ export default function Home() {
     }
   }
 
-  async function syncSessionContext(targetSessionId: string) {
-    if (!activeScenarioRef.current || !language) return;
+  async function syncSessionContext(targetSessionId: string, modeOverride?: ChatMode) {
+    if (!language) return;
+    const nextMode = modeOverride ?? chatModeRef.current;
+
+    if (nextMode === "buddy") {
+      await fetch("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: targetSessionId,
+          language,
+          difficulty,
+          chatMode: "buddy",
+          scenarioPreset: "Buddy",
+          scenarioCustom: "Adaptive language buddy chat",
+          scenarioRole: "",
+          scenarioStart: "",
+          task: null,
+          buddyContext: buddyProfileRef.current?.summary || buddyProfileSnapshot.summary,
+        }),
+      });
+      return;
+    }
+
+    if (!activeScenarioRef.current) return;
     await fetch("/api/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1116,11 +1339,13 @@ export default function Home() {
         sessionId: targetSessionId,
         language,
         difficulty,
+        chatMode: "scenario",
         scenarioPreset: activeScenarioRef.current.title,
         scenarioCustom: activeScenarioRef.current.subtitle,
         scenarioRole: activeScenarioRef.current.roleGuide,
         scenarioStart: activeScenarioRef.current.startPrompt,
         task: taskRef.current,
+        buddyContext: "",
       }),
     });
   }
@@ -1268,8 +1493,8 @@ export default function Home() {
     }
   }
 
-  async function sendMessage() {
-    const trimmed = inputValue.trim();
+  function sendUserText(rawText: string) {
+    const trimmed = rawText.trim();
     if (!trimmed) return;
     setInputValue("");
     const userMessage: Message = {
@@ -1285,6 +1510,10 @@ export default function Home() {
     void sendMessageWithRetry(trimmed, userMessage.id, previousAssistant, 0);
   }
 
+  async function sendMessage() {
+    sendUserText(inputValue);
+  }
+
   async function sendMessageWithRetry(
     text: string,
     messageId: string,
@@ -1294,7 +1523,10 @@ export default function Home() {
     continueDepth = 0
   ) {
     const activeSessionId = sessionOverride || (await ensureChatSession());
-    if (!activeSessionId || !activeScenarioRef.current) return;
+    const activeChatMode = chatModeRef.current;
+    const scenario = activeScenarioRef.current;
+    if (!activeSessionId) return;
+    if (activeChatMode === "scenario" && !scenario) return;
 
     const isStart = text === "__AI_START__" || text.startsWith("__AI_START__");
     const isContinue = text === "__AI_CONTINUE__";
@@ -1309,11 +1541,16 @@ export default function Home() {
           start: isStart,
           language,
           difficulty,
-          scenarioPreset: activeScenarioRef.current.title,
-          scenarioCustom: activeScenarioRef.current.subtitle,
-          scenarioRole: activeScenarioRef.current.roleGuide,
-          scenarioStart: activeScenarioRef.current.startPrompt,
-          task: taskRef.current,
+          chatMode: activeChatMode,
+          scenarioPreset: activeChatMode === "buddy" ? "Buddy" : scenario?.title,
+          scenarioCustom: activeChatMode === "buddy" ? "Adaptive language buddy chat" : scenario?.subtitle,
+          scenarioRole: activeChatMode === "buddy" ? "" : scenario?.roleGuide,
+          scenarioStart: activeChatMode === "buddy" ? "" : scenario?.startPrompt,
+          task: activeChatMode === "buddy" ? null : taskRef.current,
+          buddyContext:
+            activeChatMode === "buddy"
+              ? buddyProfileRef.current?.summary || buddyProfileSnapshot.summary
+              : "",
           messages: messagesStateRef.current.map((msg) => ({
             role: msg.role,
             content: msg.content,
@@ -1325,7 +1562,7 @@ export default function Home() {
         if (res.status === 404 && attempt === 0) {
           const newSession = await createSession();
           if (newSession) {
-            await syncSessionContext(newSession);
+            await syncSessionContext(newSession, activeChatMode);
             void sendMessageWithRetry(text, messageId, previousAssistant, attempt + 1, newSession);
           }
           return;
@@ -1392,7 +1629,9 @@ export default function Home() {
 
       if (!isStart) {
         void requestFeedback(activeSessionId, messageId, text, previousAssistant);
-        void checkTaskCompletion(messagesStateRef.current);
+        if (activeChatMode === "scenario") {
+          void checkTaskCompletion(messagesStateRef.current);
+        }
         if (shouldContinue && !isContinue && continueDepth < 1) {
           void sendMessageWithRetry("__AI_CONTINUE__", makeId(), "", 0, activeSessionId, continueDepth + 1);
         }
@@ -3169,6 +3408,8 @@ export default function Home() {
   }, [surgeSession]);
 
   const targetLabel = language || "Target";
+  const isBuddyChat = chatMode === "buddy";
+  const hasBuddyConversation = isBuddyChat && messages.length > 0;
   const surgeDueCount = useMemo(() => {
     const now = Date.now();
     return Object.values(surgeProgressMap).filter(
@@ -3190,6 +3431,27 @@ export default function Home() {
       ...surgeSession.delayedReviewQueue.map((entry) => entry.item),
     ]).length;
   }, [surgeSession]);
+  const buddyQuickActions = useMemo(
+    () => [
+      {
+        label: "Quiz me",
+        prompt: `Give me a quick recall check in ${language || "the target language"} using the words I am still learning. One prompt at a time.`,
+      },
+      {
+        label: "Mini chat",
+        prompt: `Start a tiny everyday conversation in ${language || "the target language"}. Keep it simple and correct me briefly if needed.`,
+      },
+      {
+        label: "Translate",
+        prompt: "Give me three very common words or short phrases to translate, one at a time.",
+      },
+      {
+        label: "Review weak words",
+        prompt: "Use my recent and weak words. Ask me short questions so I have to actively recall them.",
+      },
+    ],
+    [language]
+  );
   const currentSurgePrompt = useMemo(() => getCurrentSurgePrompt(surgeSession), [surgeSession]);
   const studyVisibleItems = useMemo(() => {
     const entries = studyPack?.entries ?? [];
@@ -4292,36 +4554,73 @@ export default function Home() {
   ) : null;
 
   const chatView = (
-    <section className="chat-shell">
+    <section className={`chat-shell ${isBuddyChat ? "buddy-shell" : ""}`}>
       <div className="chat-header">
         <button type="button" className="ghost" onClick={() => setView("dashboard")}>
           Back
         </button>
         <div className="chat-title">
-          <div className="chat-title-main">{activeScenario?.title}</div>
-          <div className="chat-title-sub">{activeScenario?.subtitle}</div>
+          <div className="chat-title-main">{isBuddyChat ? "Buddy" : activeScenario?.title}</div>
+          <div className="chat-title-sub">
+            {isBuddyChat
+              ? "Adaptive chat, tiny drills, and quick active recall."
+              : activeScenario?.subtitle}
+          </div>
         </div>
         <div className="chat-actions">
           <button type="button" className="ghost" onClick={() => setShowVocabModal(true)}>
             Vocabulary
           </button>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => getSuggestion()}
-            disabled={suggestionLoading}
-          >
-            {suggestionLoading ? "Thinking" : "Hint"}
-          </button>
+          {isBuddyChat ? (
+            <button type="button" className="ghost" onClick={() => void startBuddyChat(true)}>
+              New chat
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => getSuggestion()}
+              disabled={suggestionLoading}
+            >
+              {suggestionLoading ? "Thinking" : "Hint"}
+            </button>
+          )}
         </div>
       </div>
-      <div className="task-banner">
-        <div className="task-label">Current task</div>
-        <div className="task-text">{taskLoading ? "Generating task" : taskText || ""}</div>
-        <div className={`task-status ${taskCompleted ? "done" : taskChecking ? "checking" : ""}`}>
-          {taskCompleted ? "Completed" : taskChecking ? "Checking" : "In progress"}
+
+      {isBuddyChat ? (
+        <div className="task-banner buddy-banner">
+          <div className="task-label">Buddy focus</div>
+          <div className="buddy-status-row">
+            <span className="surge-status-pill">Learning {buddyProfileSnapshot.learningCount}</span>
+            <span className="surge-status-pill">Strong {buddyProfileSnapshot.knownCount}</span>
+            <span className="surge-status-pill">Recent {buddyProfileSnapshot.recentCount}</span>
+          </div>
+          <div className="task-text">
+            Buddy already knows what you have practiced and what still needs work. Pick a path or just reply.
+          </div>
+          <div className="buddy-quick-actions">
+            {buddyQuickActions.map((action) => (
+              <button
+                key={action.label}
+                type="button"
+                className="ghost buddy-chip"
+                onClick={() => sendUserText(action.prompt)}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="task-banner">
+          <div className="task-label">Current task</div>
+          <div className="task-text">{taskLoading ? "Generating task" : taskText || ""}</div>
+          <div className={`task-status ${taskCompleted ? "done" : taskChecking ? "checking" : ""}`}>
+            {taskCompleted ? "Completed" : taskChecking ? "Checking" : "In progress"}
+          </div>
+        </div>
+      )}
       <div ref={messagesRef} className="messages">
         {messages.map((msg) => (
           <div key={msg.id} className={`message-row ${msg.role}`}>
@@ -4362,7 +4661,7 @@ export default function Home() {
           onInput={autoGrow}
           onKeyDown={handleKeyDown}
           rows={1}
-          placeholder="Type your message"
+          placeholder={isBuddyChat ? "Reply or ask for a quiz" : "Type your message"}
         />
         <button
           type="button"
@@ -4552,6 +4851,25 @@ export default function Home() {
                 </button>
               </div>
               <div className="scenario-grid">
+                <button
+                  type="button"
+                  className="scenario-card"
+                  onClick={() => void startBuddyChat(!hasBuddyConversation)}
+                  disabled={!language}
+                >
+                  <div className="scenario-card-header">
+                    <div className="scenario-card-title">Buddy</div>
+                    <div className="scenario-ring">
+                      <div className="scenario-ring-inner">{buddyProfileSnapshot.learningCount}</div>
+                    </div>
+                  </div>
+                  <div className="scenario-card-body">
+                    Adaptive chats, quick translations, and tiny recall checks with your learned words.
+                  </div>
+                  <div className="scenario-card-meta">
+                    {hasBuddyConversation ? "Continue Buddy" : "Open Buddy"} · Learning {buddyProfileSnapshot.learningCount} · Strong {buddyProfileSnapshot.knownCount}
+                  </div>
+                </button>
                 <button
                   type="button"
                   className="scenario-card"

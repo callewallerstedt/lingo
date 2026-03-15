@@ -8,6 +8,7 @@ import {
   makeSession,
   roleStartPrompt,
   clampDifficulty,
+  clampChatMode,
   isPlausibleLanguage,
 } from "../../lib/store";
 import { callOpenAI, callOpenAIStreaming } from "../../lib/openai";
@@ -37,6 +38,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     scenarioStart,
     task,
     difficulty,
+    chatMode,
+    buddyContext,
     messages: clientMessages,
   } = body || {};
 
@@ -61,11 +64,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (typeof scenarioStart === "string") {
     session.scenarioStart = scenarioStart;
   }
-  if (typeof task === "string") {
+  if (typeof task === "string" || task === null) {
     session.task = task;
   }
   if (typeof difficulty === "string") {
     session.difficulty = clampDifficulty(difficulty);
+  }
+  if (chatMode !== undefined) {
+    session.chatMode = clampChatMode(chatMode);
+  }
+  if (typeof buddyContext === "string" || buddyContext === null) {
+    session.buddyContext = buddyContext || "";
   }
 
   if (Array.isArray(clientMessages) && clientMessages.length > 0) {

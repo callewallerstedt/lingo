@@ -13,16 +13,19 @@ export type Message = {
 };
 
 export type Difficulty = "easy" | "medium" | "hard" | null;
+export type ChatMode = "scenario" | "buddy";
 
 export type Session = {
   id: string;
   language: string | null;
+  chatMode: ChatMode;
   scenarioPreset: string;
   scenarioCustom: string;
   scenarioRole?: string;
   scenarioStart?: string;
   difficulty: Difficulty;
   task?: string | null;
+  buddyContext?: string | null;
   messages: Message[];
   translationCache: Record<string, string>;
 };
@@ -61,6 +64,10 @@ function loadSessions() {
       if (typeof session.task !== "string") {
         session.task = null;
       }
+      session.chatMode = clampChatMode(session.chatMode);
+      if (typeof session.buddyContext !== "string") {
+        session.buddyContext = "";
+      }
       // Ensure difficulty is valid
       session.difficulty = clampDifficulty(session.difficulty);
       sessions.set(id, session as Session);
@@ -93,12 +100,14 @@ export function makeSession(requestedId?: string) {
   const session: Session = {
     id,
     language: null,
+    chatMode: "scenario",
     scenarioPreset: "Cafe",
     scenarioCustom: "",
     scenarioRole: "",
     scenarioStart: "",
     difficulty: DEFAULT_DIFFICULTY,
     task: null,
+    buddyContext: "",
     messages: [],
     translationCache: {},
   };
@@ -148,6 +157,10 @@ export function clampDifficulty(value: string): Difficulty {
     return value;
   }
   return DEFAULT_DIFFICULTY;
+}
+
+export function clampChatMode(value: unknown): ChatMode {
+  return value === "buddy" ? "buddy" : "scenario";
 }
 
 function hitRateBucket(map: Map<string, { count: number; reset: number }>, key: string, limit: number, windowMs: number) {
@@ -225,6 +238,9 @@ export function roleGuide(session: Session) {
 }
 
 export function roleStartPrompt(session: Session) {
+  if (session.chatMode === "buddy") {
+    return "Start as the learner's friendly language buddy. Mention two or three concrete things you can do right now, like a mini chat, a quick translation drill, or a short recall check. Then ask one very small, easy question to get them talking.";
+  }
   if (session.scenarioStart && session.scenarioStart.trim()) {
     return session.scenarioStart.trim();
   }
@@ -258,7 +274,6 @@ export function roleStartPrompt(session: Session) {
 }
 
 export function systemPrompt(session: Session) {
-  const scenario = scenarioText(session);
   const difficulty = session.difficulty;
   const difficultyGuide =
     difficulty === "easy"
@@ -268,6 +283,33 @@ export function systemPrompt(session: Session) {
       : difficulty === "hard"
       ? "Use longer, more in-depth conversations with varied vocabulary and occasional idioms, but still prefer common, everyday words. Maintain natural pacing and ask thoughtful, engaging questions."
       : "Use natural, conversational language appropriate for language learners. Provide clear and understandable responses while gradually introducing more complex vocabulary and structures.";
+  const language = session.language || "English";
+
+  if (session.chatMode === "buddy") {
+    const buddyContext = session.buddyContext?.trim();
+
+    return [
+      `You are a warm, proactive language buddy helping the user learn ${language}.`,
+      `Use mostly ${language}, but you may briefly use English when giving a translation challenge, clarifying a task, or confirming meaning.`,
+      buddyContext ? `Learner context: ${buddyContext}` : "",
+      difficultyGuide,
+      "Act like a smart friend who helps the learner keep momentum, not like a formal teacher.",
+      "Keep replies concise by default: one to three short lines or one short paragraph.",
+      "Be proactive and concrete. Regularly suggest the next small step instead of waiting passively.",
+      "Use the learner context to adapt difficulty, recycle useful words, revisit weak items, and bring older items back naturally.",
+      "Mix mini conversations, short translation prompts, tiny recall checks, and fill-in-the-blank prompts.",
+      "Ask only one small question or challenge at a time unless the user asks for more.",
+      "Prefer ultra-common words and short daily-life phrases. Avoid rare, literary, academic, or slang-heavy language.",
+      "When the learner makes a mistake, briefly model the better phrasing and keep the flow going.",
+      "On the first reply, greet the learner, mention two or three concrete things you can do together right now, and end with one very easy prompt.",
+      "Do not dump long vocab lists unless the user explicitly asks.",
+      "Never mention or imply that you are AI, a model, or an assistant.",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  const scenario = scenarioText(session);
 
   const roleGuideText = roleGuide(session);
   const taskText = session.task ? `Current task: ${session.task}.` : "";
@@ -275,9 +317,6 @@ export function systemPrompt(session: Session) {
   const scenarioInstruction = scenario
     ? `You are fully immersed in this scenario: ${scenario}. Act as a real person in this situation - use appropriate behavior, emotions, and responses. Stay completely in character throughout the conversation. Respond naturally as someone actually in that situation would.`
     : "You are having a casual conversation. Ask what situation the user wants to practice.";
-
-  const language = session.language || "English"; // Fallback to English if not set
-
   return [
     `You are a native speaker in ${language}. Respond ONLY in ${language}.`,
     scenarioInstruction,

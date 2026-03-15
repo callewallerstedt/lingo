@@ -1,5 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { getSession, makeSession, saveSessions, isPlausibleLanguage, clampDifficulty } from "../../lib/store";
+import {
+  getSession,
+  makeSession,
+  saveSessions,
+  isPlausibleLanguage,
+  clampDifficulty,
+  clampChatMode,
+} from "../../lib/store";
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
@@ -17,6 +24,8 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     scenarioStart,
     task,
     difficulty,
+    chatMode,
+    buddyContext,
   } = body || {};
   let session = getSession(sessionId);
   const wasCreated = !session;
@@ -33,6 +42,8 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (scenarioStart !== undefined) session.scenarioStart = scenarioStart;
   if (task !== undefined) session.task = task;
   if (difficulty !== undefined) session.difficulty = clampDifficulty(difficulty);
+  if (chatMode !== undefined) session.chatMode = clampChatMode(chatMode);
+  if (buddyContext !== undefined) session.buddyContext = typeof buddyContext === "string" ? buddyContext : "";
 
   // Always save the session after any updates
   saveSessions();
@@ -43,8 +54,10 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     created: wasCreated,
     session: {
       language: session.language,
+      chatMode: session.chatMode,
       scenarioPreset: session.scenarioPreset,
       scenarioCustom: session.scenarioCustom,
+      buddyContext: session.buddyContext,
       difficulty: session.difficulty,
       messages: session.messages,
     },
