@@ -2096,11 +2096,12 @@ export default function Home() {
     return nextRecord;
   }
 
-  function getSurgeUsedKeys(session: SurgeSession) {
+  function getSurgeUsedKeys(session: SurgeSession, options?: { includeReserve?: boolean }) {
+    const includeReserve = options?.includeReserve ?? true;
     return new Set(
       [
         ...session.activeRound.map((item) => item.itemKey),
-        ...session.reserve.map((item) => item.itemKey),
+        ...(includeReserve ? session.reserve.map((item) => item.itemKey) : []),
         ...session.reviewQueue.map((item) => item.itemKey),
         ...session.typingQueue.map((item) => item.itemKey),
         ...session.delayedReviewQueue.map((item) => item.item.itemKey),
@@ -2208,7 +2209,7 @@ export default function Home() {
   async function fillSurgeRound(session: SurgeSession, baseRound: SurgeItem[] = []) {
     let nextSession = { ...session, activeRound: [...baseRound] };
     while (nextSession.activeRound.length < 5) {
-      const usedKeys = getSurgeUsedKeys(nextSession);
+      const usedKeys = getSurgeUsedKeys(nextSession, { includeReserve: false });
       nextSession.activeRound.forEach((item) => usedKeys.add(item.itemKey));
       const due = getDueSurgeItems(usedKeys);
       if (due.length) {
