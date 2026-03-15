@@ -239,6 +239,9 @@ export function roleGuide(session: Session) {
 
 export function roleStartPrompt(session: Session) {
   if (session.chatMode === "buddy") {
+    if (session.scenarioStart && session.scenarioStart.trim()) {
+      return session.scenarioStart.trim();
+    }
     return "Start as the learner's friendly language buddy. Mention two or three concrete things you can do right now, like a mini chat, a quick translation drill, or a short recall check. Then ask one very small, easy question to get them talking.";
   }
   if (session.scenarioStart && session.scenarioStart.trim()) {
@@ -290,7 +293,7 @@ export function systemPrompt(session: Session) {
 
     return [
       `You are a warm, proactive language buddy helping the user learn ${language}.`,
-      `Use mostly ${language}, but you may briefly use English when giving a translation challenge, clarifying a task, or confirming meaning.`,
+      `Default to English for explanations, coaching, and setup, and use ${language} for examples, short prompts, translations, and recall tests.`,
       buddyContext ? `Learner context: ${buddyContext}` : "",
       difficultyGuide,
       "Act like a smart friend who helps the learner keep momentum, not like a formal teacher.",
@@ -300,8 +303,9 @@ export function systemPrompt(session: Session) {
       "Mix mini conversations, short translation prompts, tiny recall checks, and fill-in-the-blank prompts.",
       "Ask only one small question or challenge at a time unless the user asks for more.",
       "Prefer ultra-common words and short daily-life phrases. Avoid rare, literary, academic, or slang-heavy language.",
+      "When you ask the learner to produce the target language, clearly label what they should translate or answer.",
       "When the learner makes a mistake, briefly model the better phrasing and keep the flow going.",
-      "On the first reply, greet the learner, mention two or three concrete things you can do together right now, and end with one very easy prompt.",
+      "On the first reply, greet the learner, explicitly reference the saved progress in the learner context, recommend the best next step, mention two or three concrete things you can do together right now, and end with one very easy prompt.",
       "Do not dump long vocab lists unless the user explicitly asks.",
       "Never mention or imply that you are AI, a model, or an assistant.",
     ]

@@ -25,6 +25,7 @@ import {
 } from "../lib/surge";
 
 const TASKS_PER_SCENARIO = 10;
+const BUDDY_STATE_KEY_PREFIX = "lingoarc_buddy_state_";
 
 type Role = "user" | "assistant";
 
@@ -98,7 +99,15 @@ type BuddyProfileSnapshot = {
   recentCount: number;
   dueCount: number;
   masteredCount: number;
+  practicedWordCount: number;
 };
+
+type BuddySavedState = {
+  messages: Message[];
+  savedAt: number;
+};
+
+type ScenarioGroupId = "foundation" | "travel" | "life";
 
 export default function Home() {
   const [authUser, setAuthUser] = useState<User | null>(null);
@@ -129,6 +138,8 @@ export default function Home() {
   const [showTaskModal, setShowTaskModal] = useState<boolean>(false);
   const [rewardPoints, setRewardPoints] = useState<number>(0);
   const [chatMode, setChatMode] = useState<ChatMode>("scenario");
+  const [activeScenarioGroup, setActiveScenarioGroup] = useState<ScenarioGroupId>("foundation");
+  const [buddySavedState, setBuddySavedState] = useState<BuddySavedState | null>(null);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -411,6 +422,11 @@ export default function Home() {
       recentCount: recentItems.length,
       dueCount,
       masteredCount,
+      practicedWordCount: uniqueStrings([
+        ...knownItems,
+        ...learningItems,
+        ...recentItems,
+      ]).length,
     };
   }, [
     difficulty,
@@ -429,6 +445,53 @@ export default function Home() {
   useEffect(() => {
     buddyProfileRef.current = buddyProfileSnapshot;
   }, [buddyProfileSnapshot]);
+
+  useEffect(() => {
+    if (!language) {
+      setBuddySavedState(null);
+      return;
+    }
+    const raw = localStorage.getItem(`${BUDDY_STATE_KEY_PREFIX}${language}`);
+    if (!raw) {
+      setBuddySavedState(null);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw) as Partial<BuddySavedState>;
+      const restoredMessages = Array.isArray(parsed.messages)
+        ? parsed.messages.filter(
+            (message): message is Message =>
+              Boolean(message) &&
+              typeof message.id === "string" &&
+              (message.role === "user" || message.role === "assistant") &&
+              typeof message.content === "string"
+          )
+        : [];
+      if (!restoredMessages.length) {
+        setBuddySavedState(null);
+        return;
+      }
+      setBuddySavedState({
+        messages: restoredMessages,
+        savedAt: typeof parsed.savedAt === "number" ? parsed.savedAt : Date.now(),
+      });
+    } catch {
+      setBuddySavedState(null);
+    }
+  }, [language]);
+
+  useEffect(() => {
+    if (!language) return;
+    if (chatMode !== "buddy" || messages.length === 0) {
+      return;
+    }
+    const payload: BuddySavedState = {
+      messages,
+      savedAt: Date.now(),
+    };
+    setBuddySavedState(payload);
+    localStorage.setItem(`${BUDDY_STATE_KEY_PREFIX}${language}`, JSON.stringify(payload));
+  }, [chatMode, language, messages]);
 
   useEffect(() => {
     localStorage.setItem("lingoarc_vocab", JSON.stringify(vocabEntries));
@@ -1275,8 +1338,21 @@ export default function Home() {
     setRewardPoints(0);
     setAuthError(null);
 
+    if (forceNew) {
+      localStorage.removeItem(`${BUDDY_STATE_KEY_PREFIX}${language}`);
+      setBuddySavedState(null);
+    }
+
     if (!forceNew && hasExistingBuddy && sessionId) {
       await syncSessionContext(sessionId, "buddy");
+      return;
+    }
+
+    if (!forceNew && buddySavedState?.messages.length) {
+      setMessages(buddySavedState.messages);
+      messagesStateRef.current = buddySavedState.messages;
+      setInputValue("");
+      setSessionId(null);
       return;
     }
 
@@ -1323,9 +1399,9 @@ export default function Home() {
           scenarioPreset: "Buddy",
           scenarioCustom: "Adaptive language buddy chat",
           scenarioRole: "",
-          scenarioStart: "",
+          scenarioStart: buddyStartupGuide,
           task: null,
-          buddyContext: buddyProfileRef.current?.summary || buddyProfileSnapshot.summary,
+          buddyContext: `${buddyProfileRef.current?.summary || buddyProfileSnapshot.summary} Startup guidance: ${buddyStartupGuide}`,
         }),
       });
       return;
@@ -3393,10 +3469,6 @@ export default function Home() {
       .sort((a, b) => b.lastClicked - a.lastClicked);
   }, [vocabEntries]);
 
-  const topicList = useMemo(() => {
-    return Object.keys(topicVocabMap).sort((a, b) => a.localeCompare(b));
-  }, [topicVocabMap]);
-
   useEffect(() => {
     if (surgeSession?.phase === "typing" && !surgeSession.typingFeedback) {
       surgeInputRef.current?.focus();
@@ -3435,23 +3507,124 @@ export default function Home() {
     () => [
       {
         label: "Quiz me",
-        prompt: `Give me a quick recall check in ${language || "the target language"} using the words I am still learning. One prompt at a time.`,
+        prompt: `Coach me in English, but quiz me on ${language || "the target language"} using the words I am still learning. One prompt at a time.`,
       },
       {
         label: "Mini chat",
-        prompt: `Start a tiny everyday conversation in ${language || "the target language"}. Keep it simple and correct me briefly if needed.`,
+        prompt: `Set up a tiny everyday conversation. Explain in English first, then have me answer in ${language || "the target language"}. Keep it simple and correct me briefly if needed.`,
       },
       {
         label: "Translate",
-        prompt: "Give me three very common words or short phrases to translate, one at a time.",
+        prompt: `Give me three very common English words or short phrases to translate into ${language || "the target language"}, one at a time.`,
       },
       {
         label: "Review weak words",
-        prompt: "Use my recent and weak words. Ask me short questions so I have to actively recall them.",
+        prompt: `Use my recent and weak words. Speak in English, but make me actively recall the ${language || "target language"} forms.`,
       },
     ],
     [language]
   );
+  const scenarioGroups = useMemo(
+    () =>
+      [
+        {
+          id: "foundation" as const,
+          title: "Daily basics",
+          description: "Short, practical scenes for the phrases you use constantly.",
+          scenarioIds: ["cafe", "restaurant", "bakery", "grocery", "market", "pharmacy", "post"],
+        },
+        {
+          id: "travel" as const,
+          title: "Travel and getting around",
+          description: "Move through stations, hotels, check-ins, and quick travel questions.",
+          scenarioIds: ["hotel", "airport", "customs", "taxi", "train", "museum", "movie"],
+        },
+        {
+          id: "life" as const,
+          title: "Work and real life",
+          description: "Conversations for work, appointments, relationships, and everyday logistics.",
+          scenarioIds: ["doctor", "job", "first-day", "apartment", "bank", "gym", "salon", "tech", "dating", "family", "school"],
+        },
+      ].map((group) => ({
+        ...group,
+        scenarios: group.scenarioIds
+          .map((scenarioId) => SCENARIOS.find((scenario) => scenario.id === scenarioId))
+          .filter((scenario): scenario is ScenarioDefinition => Boolean(scenario)),
+      })),
+    []
+  );
+  const activeScenarioGroupData =
+    scenarioGroups.find((group) => group.id === activeScenarioGroup) || scenarioGroups[0];
+  const topScenario = useMemo(() => {
+    return SCENARIOS
+      .map((scenario) => ({
+        scenario,
+        count: progressMap[scenario.id] || 0,
+      }))
+      .sort((a, b) => b.count - a.count)[0];
+  }, [progressMap]);
+  const nextScenario = useMemo(() => {
+    return SCENARIOS
+      .map((scenario) => ({
+        scenario,
+        count: progressMap[scenario.id] || 0,
+      }))
+      .sort((a, b) => a.count - b.count)[0];
+  }, [progressMap]);
+  const topicList = useMemo(() => Object.keys(topicVocabMap).sort((a, b) => a.localeCompare(b)), [topicVocabMap]);
+  const buddyResumeAvailable = isBuddyChat
+    ? hasBuddyConversation
+    : Boolean(buddySavedState?.messages.length);
+  const buddyRecommendation = useMemo(() => {
+    if (!language) {
+      return {
+        title: "Choose your language first",
+        body: "Set the target language in the header, then Buddy can build a real plan from your saved words and practice history.",
+        action: "Set language",
+      };
+    }
+    if (buddyProfileSnapshot.practicedWordCount < 12) {
+      return {
+        title: "Build a foundation first",
+        body: `You have only practiced about ${buddyProfileSnapshot.practicedWordCount} saved words so far. Start with Surge, then let Buddy turn those basics into mini chats and recall drills.`,
+        action: "Start with Surge",
+      };
+    }
+    if (buddyProfileSnapshot.dueCount > 0) {
+      return {
+        title: "You have words ready for review",
+        body: `${buddyProfileSnapshot.dueCount} Surge items are due now. Clear those first so Buddy can reinforce the exact words that are still unstable.`,
+        action: "Continue Surge",
+      };
+    }
+    if ((topScenario?.count || 0) < 2) {
+      return {
+        title: "Start using your words in scenes",
+        body: "You have some vocabulary, but not much scenario practice yet. A short daily-life scenario will make those words stick faster.",
+        action: "Open a scenario",
+      };
+    }
+    return {
+      title: "Turn your progress into active recall",
+      body: `You have ${buddyProfileSnapshot.practicedWordCount} practiced words and ${buddyProfileSnapshot.masteredCount} stronger items. Buddy should now push you with mini chats, short translations, and recycled weak words.`,
+      action: buddyResumeAvailable ? "Continue Buddy" : "Open Buddy",
+    };
+  }, [buddyProfileSnapshot, buddyResumeAvailable, language, topScenario]);
+  const buddyStartupGuide = useMemo(() => {
+    if (!language) {
+      return "Open with a short, encouraging note and ask the learner to pick a language first.";
+    }
+    if (buddyProfileSnapshot.practicedWordCount < 12) {
+      return `Tell the learner they have practiced ${buddyProfileSnapshot.practicedWordCount} saved words so far and need a stronger base. Recommend Surge first, then offer a tiny warm-up chat using only the most common words.`;
+    }
+    if (buddyProfileSnapshot.dueCount > 0) {
+      return `Tell the learner they have ${buddyProfileSnapshot.dueCount} due Surge reviews waiting. Recommend clearing those first, then offer one small follow-up chat using recent words.`;
+    }
+    if ((topScenario?.count || 0) < 2) {
+      return "Tell the learner they have enough core words to start using them in full situations. Suggest one short daily-life scenario and then offer a mini conversation.";
+    }
+    return `Tell the learner they have practiced ${buddyProfileSnapshot.practicedWordCount} saved words, with ${buddyProfileSnapshot.masteredCount} stronger items and ${buddyProfileSnapshot.learningCount} still in progress. Recommend a focused buddy drill that targets weak items first.`;
+  }, [buddyProfileSnapshot, language, topScenario]);
   const currentSurgePrompt = useMemo(() => getCurrentSurgePrompt(surgeSession), [surgeSession]);
   const studyVisibleItems = useMemo(() => {
     const entries = studyPack?.entries ?? [];
@@ -3465,42 +3638,6 @@ export default function Home() {
     if (!showStarredOnly) return sortedVocab;
     return sortedVocab.filter((entry) => entry.starred);
   }, [sortedVocab, showStarredOnly]);
-
-  const dashboardCards = (
-    <div className="scenario-grid">
-      {SCENARIOS.map((scenario) => {
-        const completedCount = progressMap[scenario.id] || 0;
-        const progressRatio = Math.min(completedCount / TASKS_PER_SCENARIO, 1);
-        const percent = Math.round(progressRatio * 100);
-        const isDisabled = !language;
-        return (
-          <button
-            key={scenario.id}
-            type="button"
-            className={`scenario-card ${completedCount >= TASKS_PER_SCENARIO ? "done" : ""}`}
-            onClick={() => startScenarioChat(scenario)}
-            disabled={isDisabled}
-            title={isDisabled ? "Set a language first" : ""}
-          >
-            <div className="scenario-card-header">
-              <div className="scenario-card-title">{scenario.title}</div>
-              <div
-                className="scenario-ring"
-                style={{
-                  background: `conic-gradient(var(--accent) ${percent}%, rgba(255,255,255,0.08) ${percent}% 100%)`,
-                }}
-              >
-                <div className="scenario-ring-inner">
-                  {completedCount}/{TASKS_PER_SCENARIO}
-                </div>
-              </div>
-            </div>
-            <div className="scenario-card-body">{scenario.subtitle}</div>
-          </button>
-        );
-      })}
-    </div>
-  );
 
   const surgeView = (
     <section className="surge-shell">
@@ -4553,6 +4690,295 @@ export default function Home() {
     </section>
   ) : null;
 
+  const dashboardView = (
+    <>
+      <section className="dashboard-hero">
+        <div className="dashboard-hero-copy">
+          <div className="dashboard-kicker">NeoLingo dashboard</div>
+          <div>
+            <h1>{language ? `Practice ${language} with a clear next step.` : "Choose a language and start with a clear plan."}</h1>
+            <p>{buddyRecommendation.body}</p>
+          </div>
+          <div className="dashboard-hero-actions">
+            <button
+              type="button"
+              className="solid"
+              onClick={() => void startBuddyChat(!buddyResumeAvailable)}
+              disabled={!language}
+            >
+              {buddyResumeAvailable ? "Continue Buddy" : "Open Buddy"}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => void startSurgeSession(!surgeSession)}
+              disabled={!language || surgeLoading}
+            >
+              {surgeSession ? "Continue Surge" : "Start Surge"}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => nextScenario && startScenarioChat(nextScenario.scenario)}
+              disabled={!language || !nextScenario}
+            >
+              Start scenario
+            </button>
+          </div>
+        </div>
+        <div className="dashboard-hero-stats">
+          <div className="dashboard-stat-card">
+            <div className="dashboard-stat-label">Practiced words</div>
+            <div className="dashboard-stat-value">{buddyProfileSnapshot.practicedWordCount}</div>
+            <div className="dashboard-stat-note">Saved across vocab, Surge, and Buddy context</div>
+          </div>
+          <div className="dashboard-stat-card">
+            <div className="dashboard-stat-label">Due now</div>
+            <div className="dashboard-stat-value">{surgeDueCount}</div>
+            <div className="dashboard-stat-note">Words ready for spaced review right now</div>
+          </div>
+          <div className="dashboard-stat-card">
+            <div className="dashboard-stat-label">Scenario reps</div>
+            <div className="dashboard-stat-value">{totalPoints()}</div>
+            <div className="dashboard-stat-note">
+              {topScenario?.count
+                ? `Best progress: ${topScenario.scenario.title} ${topScenario.count}/${TASKS_PER_SCENARIO}`
+                : "No scenarios completed yet"}
+            </div>
+          </div>
+          <div className="dashboard-stat-card">
+            <div className="dashboard-stat-label">Buddy status</div>
+            <div className="dashboard-stat-value">{buddyResumeAvailable ? "Live" : "Fresh"}</div>
+            <div className="dashboard-stat-note">
+              {buddyResumeAvailable
+                ? "Buddy can resume with your saved context"
+                : "Buddy will build a plan from your progress"}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-section dashboard-section-split">
+        <div className="dashboard-panel dashboard-recommend-panel">
+          <div className="dashboard-panel-header">
+            <div>
+              <div className="dashboard-section-kicker">Recommended next</div>
+              <h2>{buddyRecommendation.title}</h2>
+            </div>
+            <div className="dashboard-meta">
+              {loadingProgress ? "Syncing progress" : `Tracking ${buddyProfileSnapshot.practicedWordCount} practiced items`}
+            </div>
+          </div>
+          <p className="dashboard-panel-copy">{buddyRecommendation.body}</p>
+          <div className="dashboard-recommend-actions">
+            <button
+              type="button"
+              className="solid"
+              onClick={() => {
+                if (buddyRecommendation.action.includes("Surge")) {
+                  void startSurgeSession(!surgeSession);
+                  return;
+                }
+                if (buddyRecommendation.action.includes("scenario")) {
+                  if (nextScenario) {
+                    void startScenarioChat(nextScenario.scenario);
+                  }
+                  return;
+                }
+                void startBuddyChat(!buddyResumeAvailable);
+              }}
+              disabled={!language}
+            >
+              {buddyRecommendation.action}
+            </button>
+            <button type="button" className="ghost" onClick={() => setView("common")} disabled={!language}>
+              Review common words
+            </button>
+          </div>
+        </div>
+
+        <div className="dashboard-panel dashboard-buddy-panel">
+          <div className="dashboard-panel-header">
+            <div>
+              <div className="dashboard-section-kicker">Buddy sees</div>
+              <h2>Your current learning state</h2>
+            </div>
+          </div>
+          <div className="dashboard-buddy-list">
+            <div className="dashboard-buddy-item">
+              <span className="dashboard-buddy-label">Learning now</span>
+              <span className="dashboard-buddy-value">{buddyProfileSnapshot.learningCount}</span>
+            </div>
+            <div className="dashboard-buddy-item">
+              <span className="dashboard-buddy-label">Stronger items</span>
+              <span className="dashboard-buddy-value">{buddyProfileSnapshot.masteredCount}</span>
+            </div>
+            <div className="dashboard-buddy-item">
+              <span className="dashboard-buddy-label">Recent practice</span>
+              <span className="dashboard-buddy-value">{buddyProfileSnapshot.recentCount}</span>
+            </div>
+          </div>
+          <div className="dashboard-buddy-preview">
+            {buddyProfileSnapshot.learningItems.slice(0, 4).map((item) => (
+              <span key={item} className="dashboard-inline-pill">{item}</span>
+            ))}
+            {!buddyProfileSnapshot.learningItems.length ? (
+              <span className="dashboard-inline-pill muted">No saved learning items yet</span>
+            ) : null}
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-section">
+        <div className="dashboard-panel-header">
+          <div>
+            <div className="dashboard-section-kicker">Practice paths</div>
+            <h2>Pick the kind of practice you want</h2>
+          </div>
+          <button type="button" className="ghost" onClick={() => setShowTopicModal(true)}>
+            + New topic
+          </button>
+        </div>
+        <div className="dashboard-path-grid">
+          <button
+            type="button"
+            className="dashboard-path-card"
+            onClick={() => void startBuddyChat(!buddyResumeAvailable)}
+            disabled={!language}
+          >
+            <div className="dashboard-path-top">
+              <div className="dashboard-path-title">Buddy</div>
+              <div className="dashboard-path-badge">{buddyResumeAvailable ? "Resume" : "Adaptive"}</div>
+            </div>
+            <div className="dashboard-path-copy">Smart conversations, tiny quizzes, and guidance based on what you have actually practiced.</div>
+          </button>
+          <button
+            type="button"
+            className="dashboard-path-card"
+            onClick={() => void startSurgeSession(!surgeSession)}
+            disabled={!language || surgeLoading}
+          >
+            <div className="dashboard-path-top">
+              <div className="dashboard-path-title">Surge</div>
+              <div className="dashboard-path-badge">{surgeDueCount} due</div>
+            </div>
+            <div className="dashboard-path-copy">Fast core vocabulary loops with previews, matching, typing, and spaced repetition.</div>
+          </button>
+          <button type="button" className="dashboard-path-card" onClick={() => setView("common")}>
+            <div className="dashboard-path-top">
+              <div className="dashboard-path-title">Common words</div>
+              <div className="dashboard-path-badge">Basics</div>
+            </div>
+            <div className="dashboard-path-copy">Review the everyday words and short phrases you need most often.</div>
+          </button>
+          <button type="button" className="dashboard-path-card" onClick={() => setView("scenario-vocab")}>
+            <div className="dashboard-path-top">
+              <div className="dashboard-path-title">Scenario vocabulary</div>
+              <div className="dashboard-path-badge">By context</div>
+            </div>
+            <div className="dashboard-path-copy">Generate and review vocabulary tied to a specific real-life situation.</div>
+          </button>
+          {topicList.slice(0, 2).map((topic) => {
+            const count = topicVocabMap[topic]?.entries.filter((entry) => !entry.archived).length || 0;
+            return (
+              <button
+                key={topic}
+                type="button"
+                className="dashboard-path-card"
+                onClick={() => {
+                  setActiveTopic(topic);
+                  setTopicVocabFlipped({});
+                  setView("topic-detail");
+                }}
+              >
+                <div className="dashboard-path-top">
+                  <div className="dashboard-path-title">{topic}</div>
+                  <div className="dashboard-path-badge">{count} saved</div>
+                </div>
+                <div className="dashboard-path-copy">Custom topic deck you can keep growing and revisiting.</div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="dashboard-section">
+        <div className="dashboard-panel scenario-browser">
+          <div className="dashboard-panel-header">
+            <div>
+              <div className="dashboard-section-kicker">Scenarios</div>
+              <h2>Practice one category at a time</h2>
+              {!language ? (
+                <p className="dashboard-alert">Set a language above to start.</p>
+              ) : (
+                <p className="dashboard-panel-copy">Use grouped scenes instead of one giant wall of cards.</p>
+              )}
+            </div>
+          </div>
+          <div className="dashboard-group-tabs">
+            {scenarioGroups.map((group) => (
+              <button
+                key={group.id}
+                type="button"
+                className={`dashboard-group-tab ${activeScenarioGroup === group.id ? "active" : ""}`}
+                onClick={() => setActiveScenarioGroup(group.id)}
+              >
+                <span>{group.title}</span>
+                <span className="dashboard-group-count">{group.scenarios.length}</span>
+              </button>
+            ))}
+          </div>
+          <div className="dashboard-group-summary">
+            <div>
+              <div className="dashboard-group-title">{activeScenarioGroupData.title}</div>
+              <div className="dashboard-group-copy">{activeScenarioGroupData.description}</div>
+            </div>
+            <div className="dashboard-group-meta">
+              Next up: {activeScenarioGroupData.scenarios
+                .map((scenario) => ({ scenario, count: progressMap[scenario.id] || 0 }))
+                .sort((a, b) => a.count - b.count)[0]?.scenario.title || "Pick any scene"}
+            </div>
+          </div>
+          <div className="scenario-grid dashboard-scenario-grid">
+            {activeScenarioGroupData.scenarios.map((scenario) => {
+              const completedCount = progressMap[scenario.id] || 0;
+              const progressRatio = Math.min(completedCount / TASKS_PER_SCENARIO, 1);
+              const percent = Math.round(progressRatio * 100);
+              return (
+                <button
+                  key={scenario.id}
+                  type="button"
+                  className={`scenario-card ${completedCount >= TASKS_PER_SCENARIO ? "done" : ""}`}
+                  onClick={() => startScenarioChat(scenario)}
+                  disabled={!language}
+                  title={!language ? "Set a language first" : ""}
+                >
+                  <div className="scenario-card-header">
+                    <div className="scenario-card-title">{scenario.title}</div>
+                    <div
+                      className="scenario-ring"
+                      style={{
+                        background: `conic-gradient(var(--accent) ${percent}%, rgba(255,255,255,0.08) ${percent}% 100%)`,
+                      }}
+                    >
+                      <div className="scenario-ring-inner">
+                        {completedCount}/{TASKS_PER_SCENARIO}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="scenario-card-body">{scenario.subtitle}</div>
+                  <div className="scenario-card-meta">
+                    {completedCount ? `${completedCount} reps completed` : "Start with a first rep"}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+    </>
+  );
+
   const chatView = (
     <section className={`chat-shell ${isBuddyChat ? "buddy-shell" : ""}`}>
       <div className="chat-header">
@@ -4597,7 +5023,7 @@ export default function Home() {
             <span className="surge-status-pill">Recent {buddyProfileSnapshot.recentCount}</span>
           </div>
           <div className="task-text">
-            Buddy already knows what you have practiced and what still needs work. Pick a path or just reply.
+            Buddy already knows what you have practiced and what still needs work. It will guide in English first, then make you produce the target language.
           </div>
           <div className="buddy-quick-actions">
             {buddyQuickActions.map((action) => (
@@ -4835,7 +5261,10 @@ export default function Home() {
             </div>
           </div>
         ) : view === "dashboard" ? (
-          <section className="dashboard">
+          <section className="dashboard dashboard-home">
+            {dashboardView}
+            {false ? (
+              <>
             <section className="home-vocab">
               <div className="home-vocab-header">
                 <div>
@@ -4942,7 +5371,9 @@ export default function Home() {
                 {loadingProgress ? "Syncing progress" : `Total points: ${totalPoints()}`}
               </div>
             </div>
-            {dashboardCards}
+            {null}
+              </>
+            ) : null}
           </section>
         ) : view === "common" ? (
           commonWordsView
