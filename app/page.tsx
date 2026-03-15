@@ -6,6 +6,7 @@ import type { Difficulty } from "../lib/store";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { SCENARIOS, type ScenarioDefinition } from "../lib/scenarios";
 import {
+  SURGE_PROGRESS_KEY_PREFIX,
   SURGE_SESSION_KEY,
   createEmptySurgeSession,
   dedupeSurgeItems,
@@ -300,8 +301,7 @@ export default function Home() {
   }, [topicVocabMap]);
 
   useEffect(() => {
-    if (!authUser || !language) {
-      localStorage.removeItem(SURGE_SESSION_KEY);
+    if (!language) {
       return;
     }
     if (!surgeSession || surgeSession.language !== language) {
@@ -309,7 +309,15 @@ export default function Home() {
       return;
     }
     localStorage.setItem(SURGE_SESSION_KEY, JSON.stringify(surgeSession));
-  }, [authUser, language, surgeSession]);
+  }, [language, surgeSession]);
+
+  useEffect(() => {
+    if (!language) return;
+    localStorage.setItem(
+      `${SURGE_PROGRESS_KEY_PREFIX}${language}`,
+      JSON.stringify(surgeProgressMap)
+    );
+  }, [language, surgeProgressMap]);
 
 
   useEffect(() => {
@@ -331,6 +339,20 @@ export default function Home() {
 
   useEffect(() => {
     if (!language) return;
+    const savedSurgeProgress = localStorage.getItem(`${SURGE_PROGRESS_KEY_PREFIX}${language}`);
+    if (savedSurgeProgress) {
+      try {
+        const parsed = JSON.parse(savedSurgeProgress) as Record<string, SurgeProgressRecord>;
+        if (parsed && typeof parsed === "object") {
+          setSurgeProgressMap(parsed);
+        }
+      } catch {
+        setSurgeProgressMap({});
+      }
+    } else {
+      setSurgeProgressMap({});
+    }
+
     if (authUser) {
       void loadUserVocab(language);
       void loadSurgeProgress(language);
@@ -772,7 +794,6 @@ export default function Home() {
       .eq("language", activeLanguage);
 
     if (error) {
-      setSurgeProgressMap({});
       return;
     }
 
@@ -2591,45 +2612,59 @@ export default function Home() {
     const context = uiAudioContextRef.current ?? new AudioContextCtor();
     uiAudioContextRef.current = context;
 
+    const scheduleThock = () => {
+      const start = context.currentTime;
+
+      const master = context.createGain();
+      master.gain.setValueAtTime(0.0001, start);
+      master.gain.exponentialRampToValueAtTime(0.36, start + 0.005);
+      master.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+      master.connect(context.destination);
+
+      const body = context.createOscillator();
+      body.type = "triangle";
+      body.frequency.setValueAtTime(108, start);
+      body.frequency.exponentialRampToValueAtTime(68, start + 0.13);
+      const bodyGain = context.createGain();
+      bodyGain.gain.setValueAtTime(0.0001, start);
+      bodyGain.gain.exponentialRampToValueAtTime(0.7, start + 0.006);
+      bodyGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.14);
+      body.connect(bodyGain);
+      bodyGain.connect(master);
+      body.start(start);
+      body.stop(start + 0.15);
+
+      const knock = context.createOscillator();
+      knock.type = "square";
+      knock.frequency.setValueAtTime(190, start);
+      knock.frequency.exponentialRampToValueAtTime(118, start + 0.028);
+      const knockGain = context.createGain();
+      knockGain.gain.setValueAtTime(0.0001, start);
+      knockGain.gain.exponentialRampToValueAtTime(0.2, start + 0.003);
+      knockGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.05);
+      knock.connect(knockGain);
+      knockGain.connect(master);
+      knock.start(start);
+      knock.stop(start + 0.055);
+    };
+
     if (context.state === "suspended") {
-      void context.resume();
+      void context.resume().then(scheduleThock).catch(() => {});
+      return;
     }
 
-    const start = context.currentTime;
-    const master = context.createGain();
-    master.gain.setValueAtTime(0.0001, start);
-    master.gain.exponentialRampToValueAtTime(0.2, start + 0.008);
-    master.gain.exponentialRampToValueAtTime(0.0001, start + 0.11);
-    master.connect(context.destination);
-
-    const low = context.createOscillator();
-    low.type = "triangle";
-    low.frequency.setValueAtTime(132, start);
-    low.frequency.exponentialRampToValueAtTime(88, start + 0.09);
-    low.connect(master);
-    low.start(start);
-    low.stop(start + 0.12);
-
-    const click = context.createOscillator();
-    click.type = "square";
-    click.frequency.setValueAtTime(220, start);
-    click.frequency.exponentialRampToValueAtTime(140, start + 0.03);
-    const clickGain = context.createGain();
-    clickGain.gain.setValueAtTime(0.0001, start);
-    clickGain.gain.exponentialRampToValueAtTime(0.1, start + 0.004);
-    clickGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.04);
-    click.connect(clickGain);
-    clickGain.connect(master);
-    click.start(start);
-    click.stop(start + 0.045);
+    scheduleThock();
   }
 
   function handleAppPointerDownCapture(event: React.PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
-    const button = target.closest("button");
-    if (!button || button.hasAttribute("disabled") || button.getAttribute("aria-disabled") === "true") return;
+    if (target.closest("input, textarea, select, option")) return;
+    const interactive = target.closest("button, [role='button'], a, .token.word");
+    if (interactive instanceof HTMLElement) {
+      if (interactive.hasAttribute("disabled") || interactive.getAttribute("aria-disabled") === "true") return;
+    }
     playUiClickThock();
   }
 
@@ -3294,24 +3329,6 @@ export default function Home() {
             >
               {surgeSession.previewRevealed ? "Next" : "Reveal"}
             </button>
-            {surgeSession.previewRevealed ? (
-              <button
-                type="button"
-                className="ghost"
-                onClick={() =>
-                  setSurgeSession((current) =>
-                    current
-                      ? {
-                          ...current,
-                          previewRevealed: false,
-                        }
-                      : current
-                  )
-                }
-              >
-                Hide
-              </button>
-            ) : null}
           </div>
         </div>
       ) : surgeSession.phase === "match" ? (

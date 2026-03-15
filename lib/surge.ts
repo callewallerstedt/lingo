@@ -62,6 +62,7 @@ export type SurgeSession = {
 };
 
 export const SURGE_SESSION_KEY = "lingoarc_surge_session";
+export const SURGE_PROGRESS_KEY_PREFIX = "lingoarc_surge_progress_";
 
 export function createEmptySurgeSession(language: string): SurgeSession {
   return {
