@@ -75,7 +75,7 @@ type SuggestionPayload = {
   suggestion: string;
 };
 
-type VocabScope = "chat" | "common" | "scenario" | "topic" | "surge";
+type VocabScope = "chat" | "common" | "scenario" | "topic" | "surge" | "example";
 type ExampleScope = "chat" | "common" | "scenario" | "topic";
 type ThemeMode = "dark" | "light";
 
@@ -2276,13 +2276,14 @@ export default function Home() {
   async function startSurgeSession(forceNew = false) {
     if (!authUser || !language) {
       setSurgeError("Choose a language before starting Surge.");
+      setView("surge");
       return;
     }
+    setView("surge");
     setSurgeLoading(true);
     setSurgeError(null);
     try {
       if (!forceNew && surgeSession && surgeSession.language === language) {
-        setView("surge");
         return;
       }
       let nextSession = createEmptySurgeSession(language);
@@ -2293,7 +2294,6 @@ export default function Home() {
         return;
       }
       setSurgeSession(nextSession);
-      setView("surge");
     } finally {
       setSurgeLoading(false);
     }
@@ -2335,6 +2335,7 @@ export default function Home() {
       ...nextSession,
       previewRevealed: true,
     });
+    void playFlashcardAudio("surge", current.text);
   }
 
   async function advanceSurgePreview() {
@@ -3117,10 +3118,14 @@ export default function Home() {
         <div className="surge-panel surge-empty">
           <div>
             <h3>Ready for a fast vocab sprint?</h3>
-            <p>Surge mixes previews, matching, and spaced recall so you can keep moving without setup.</p>
+            <p>
+              {surgeError
+                ? surgeError
+                : "Surge mixes previews, matching, and spaced recall so you can keep moving without setup."}
+            </p>
           </div>
           <button type="button" className="solid" onClick={() => void startSurgeSession(true)}>
-            Start Surge
+            {surgeError ? "Try again" : "Start Surge"}
           </button>
         </div>
       ) : surgeSession.phase === "preview" && currentSurgePrompt ? (
@@ -3322,7 +3327,6 @@ export default function Home() {
         </div>
       )}
 
-      {surgeError ? <div className="dashboard-alert">{surgeError}</div> : null}
       {surgeSavedAt ? (
         <div className="surge-footnote">Progress saved {new Date(surgeSavedAt).toLocaleTimeString()}</div>
       ) : null}
@@ -4655,7 +4659,16 @@ export default function Home() {
                   {exampleModal.items.map((item, index) => {
                     return (
                       <div key={`${exampleModal.word}-${index}`} className="vocab-example-line">
-                        <div className="vocab-example-label">{item.label}</div>
+                        <div className="vocab-example-top">
+                          <div className="vocab-example-label">{item.label}</div>
+                          <button
+                            type="button"
+                            className="ghost vocab-example-audio"
+                            onClick={() => void playFlashcardAudio("example", item.sentence)}
+                          >
+                            Hear it
+                          </button>
+                        </div>
                         <div className="vocab-example-sentence">
                           {renderClickableTokens(item.sentence, `ex-${index}`, undefined, {
                               scope: exampleModal.scope,
