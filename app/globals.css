@@ -1895,3 +1895,523 @@ body {
 .feedback {
   z-index: 0;
 }
+
+body[data-theme="dark"] {
+  --bg: #0c1118;
+  --surface: rgba(20, 27, 37, 0.86);
+  --surface-2: rgba(30, 38, 50, 0.92);
+  --surface-3: rgba(40, 50, 64, 0.86);
+  --card-bg: rgba(22, 29, 39, 0.9);
+  --card-bg-strong: rgba(30, 38, 49, 0.96);
+  --card-highlight: rgba(121, 145, 173, 0.18);
+  --ink: #eff6ff;
+  --muted: #aebdce;
+  --accent: #9fc4ff;
+  --bubble-right: rgba(105, 138, 179, 0.28);
+  --bubble-right-text: #f4f8ff;
+  --border: transparent;
+  --glass-bg: rgba(21, 28, 39, 0.88);
+  --glass-border: transparent;
+  --shadow: 0 16px 40px rgba(4, 10, 18, 0.3);
+}
+
+body[data-theme="light"] {
+  --bg: #fffaf4;
+  --surface: rgba(255, 255, 255, 0.82);
+  --surface-2: rgba(255, 247, 244, 0.92);
+  --surface-3: rgba(255, 239, 242, 0.9);
+  --card-bg: rgba(255, 255, 255, 0.84);
+  --card-bg-strong: rgba(255, 250, 246, 0.96);
+  --card-highlight: rgba(255, 202, 212, 0.32);
+  --ink: #2c2430;
+  --muted: #776d78;
+  --accent: #d7879d;
+  --bubble-right: rgba(255, 216, 224, 0.62);
+  --bubble-right-text: #382a37;
+  --border: transparent;
+  --glass-bg: rgba(255, 255, 255, 0.8);
+  --glass-border: transparent;
+  --shadow: 0 18px 40px rgba(225, 198, 206, 0.26);
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(159, 196, 255, 0.12), transparent 30%),
+    radial-gradient(circle at top right, rgba(255, 201, 215, 0.1), transparent 28%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 92%, white 8%) 0%, var(--bg) 100%);
+  color: var(--ink);
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+.app-shell {
+  background: transparent;
+}
+
+.top-bar {
+  position: sticky;
+  top: 12px;
+  z-index: 20;
+  padding: 10px 14px;
+  margin: 12px 16px 0;
+  min-height: 0;
+  border-radius: 8px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(24px);
+}
+
+.top-bar .brand {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  border: 0;
+  text-align: left;
+}
+
+.brand-button {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.brand-name {
+  font-size: 18px;
+  letter-spacing: 0.14em;
+}
+
+.brand-tag {
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.header-controls {
+  gap: 14px;
+  margin-left: 16px;
+  flex-wrap: wrap;
+}
+
+.control-group,
+.user-section {
+  gap: 12px;
+}
+
+.control-item {
+  min-width: 0;
+}
+
+.control-item.compact {
+  min-width: 120px;
+}
+
+.control-label {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+}
+
+.control-select,
+.language-input,
+select,
+input,
+textarea {
+  background: var(--surface-2);
+  color: var(--ink);
+  border-radius: 6px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+button {
+  box-shadow: none;
+}
+
+button.ghost,
+button.solid,
+.signout-btn,
+.language-save-btn,
+.vocab-toolbar .ghost,
+.vocab-tab,
+.vocab-clear,
+.segmented-btn,
+.difficulty-btn,
+.toolbar-star-toggle,
+.toolbar-archive-toggle {
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+button.ghost,
+.signout-btn,
+.language-save-btn,
+.vocab-toolbar .ghost,
+.vocab-tab,
+.vocab-clear {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+button.solid {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+.difficulty-controls,
+.segmented {
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 3px;
+}
+
+.difficulty-btn,
+.segmented-btn {
+  color: var(--muted);
+  padding: 7px 12px;
+}
+
+.difficulty-btn.active,
+.segmented-btn.active,
+.theme-toggle .difficulty-btn.active {
+  background: var(--card-highlight);
+  color: var(--ink);
+}
+
+.theme-toggle {
+  min-width: 140px;
+}
+
+.user-points,
+.user-name {
+  background: transparent;
+  padding: 0;
+}
+
+.user-points {
+  font-size: 12px;
+}
+
+.user-name {
+  color: var(--muted);
+}
+
+.main-area {
+  padding: 20px 16px 28px;
+}
+
+.dashboard,
+.chat-shell {
+  gap: 14px;
+}
+
+.home-vocab,
+.auth-panel,
+.chat-header,
+.task-banner,
+.vocab-modal,
+.completion-modal,
+.scenario-card,
+.vocab-row,
+.vocab-card,
+.message,
+.feedback {
+  background: var(--card-bg);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(24px);
+}
+
+.home-vocab,
+.auth-panel,
+.chat-header,
+.task-banner,
+.completion-modal {
+  border-radius: 8px;
+}
+
+.home-vocab,
+.auth-panel {
+  padding: 14px;
+}
+
+.chat-header,
+.task-banner {
+  padding: 12px 14px;
+}
+
+.dashboard-header {
+  align-items: flex-end;
+}
+
+.dashboard-header h2,
+.home-vocab-header h2,
+.auth-panel h2 {
+  font-size: 20px;
+  margin: 0;
+}
+
+.dashboard-header p,
+.home-vocab-header p,
+.chat-title-sub,
+.task-status,
+.task-label,
+.scenario-card-body,
+.auth-panel p,
+.auth-note {
+  color: var(--muted);
+}
+
+.scenario-grid {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.scenario-card {
+  padding: 14px;
+  border-radius: 8px;
+  gap: 10px;
+  background: var(--card-bg-strong);
+}
+
+.scenario-card:hover {
+  background: color-mix(in srgb, var(--card-bg-strong) 88%, var(--card-highlight) 12%);
+}
+
+.scenario-card-title {
+  font-size: 15px;
+}
+
+.scenario-card-body {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.scenario-ring {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--surface-3);
+}
+
+.scenario-ring-inner {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+}
+
+.message {
+  border-radius: 8px;
+  padding: 8px 10px;
+  line-height: 1.45;
+  background: var(--card-bg-strong);
+}
+
+.message.user {
+  background: var(--bubble-right);
+  color: var(--bubble-right-text);
+}
+
+.feedback {
+  border-radius: 8px;
+  padding: 20px 10px 8px;
+}
+
+.composer {
+  padding: 10px 0 0;
+}
+
+textarea {
+  min-height: 40px;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.vocab-modal {
+  border-radius: 8px;
+  background: var(--card-bg-strong);
+}
+
+.vocab-modal-header {
+  padding: 12px 14px;
+}
+
+.vocab-modal-body {
+  padding: 12px 14px 14px;
+}
+
+.vocab-row {
+  padding: 9px 10px;
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.vocab-cards {
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 168px));
+}
+
+.vocab-card-wrap,
+.vocab-card {
+  width: 168px;
+}
+
+.vocab-card {
+  min-height: 132px;
+  border-radius: 6px;
+  background: var(--card-bg-strong);
+}
+
+.vocab-card:hover {
+  background: color-mix(in srgb, var(--card-bg-strong) 90%, var(--card-highlight) 10%);
+}
+
+.vocab-card.flipped {
+  background: color-mix(in srgb, var(--card-bg-strong) 84%, var(--card-highlight) 16%);
+  outline: none;
+}
+
+.vocab-card-actions {
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  gap: 4px;
+}
+
+.vocab-card-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  opacity: 0.45;
+}
+
+.vocab-card-icon:hover,
+.vocab-card-icon.active,
+.vocab-card-icon.holding {
+  opacity: 1;
+}
+
+.vocab-card-icon:hover {
+  background: var(--card-highlight);
+}
+
+.vocab-card-icon.active {
+  background: var(--card-highlight);
+  color: var(--accent);
+}
+
+.vocab-card-face {
+  gap: 8px;
+  padding: 14px 12px;
+}
+
+.vocab-card-word,
+.vocab-cards .vocab-card-translation {
+  font-size: 15px;
+}
+
+.vocab-card-translation {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.vocab-card-hint {
+  font-size: 10px;
+}
+
+.vocab-examples {
+  border-radius: 6px;
+  background: var(--surface-2);
+  padding: 10px;
+}
+
+.vocab-examples-list {
+  gap: 10px;
+}
+
+.vocab-examples-note {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 2px 2px;
+}
+
+.vocab-example-line {
+  display: grid;
+  gap: 6px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  padding: 10px;
+}
+
+.vocab-example-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+
+.vocab-example-sentence {
+  font-size: 14px;
+  color: var(--ink);
+  line-height: 1.45;
+}
+
+.vocab-example-translation {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.home-vocab-controls,
+.home-vocab-actions,
+.chat-actions,
+.vocab-controls {
+  gap: 8px;
+}
+
+@media (max-width: 980px) {
+  .top-bar {
+    align-items: flex-start;
+  }
+
+  .header-controls {
+    width: 100%;
+    margin-left: 0;
+    justify-content: space-between;
+  }
+
+  .control-group {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 720px) {
+  .top-bar {
+    margin: 10px 10px 0;
+    padding: 10px;
+    border-radius: 6px;
+  }
+
+  .main-area {
+    padding: 14px 10px 20px;
+  }
+
+  .header-controls,
+  .user-section,
+  .dashboard-header,
+  .chat-header,
+  .home-vocab-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .vocab-cards {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+
+  .vocab-card-wrap,
+  .vocab-card {
+    width: 100%;
+  }
+}

@@ -2,7 +2,11 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { callOpenAI } from "../../lib/openai";
 
 type ExamplePayload = {
-  lines: string[];
+  items: Array<{
+    label: string;
+    sentence: string;
+    translation: string;
+  }>;
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -27,15 +31,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           type: "text" as const,
           text: [
             "Generate example sentences for a single vocabulary word.",
-            "Use the target language for all sentences.",
+            "Use the target language for all example sentences.",
+            "Add a short natural English translation for every example sentence.",
             "Provide 4 to 6 short, natural sentences using the word in different forms or roles.",
-            "Format each line as: Form: sentence",
-            "Form must be a clear label like Singular, Plural, Definite, Past, Polite, Question.",
+            "Each item must have label, sentence, and translation fields.",
+            "Label must be a clear form name like Singular, Plural, Definite, Past, Polite, Question.",
             "Always include Singular and Plural as two of the lines (label them exactly).",
             "If the language doesn't mark plural/singular, still provide two lines labeled Singular and Plural using the base form.",
             "Include a Question line when it makes sense; otherwise use another common form (Definite, Past, Polite, Formal, Informal).",
             "If the language uses definiteness, include Definite as one of the lines.",
-            "Return only JSON: {\"lines\": [\"Plural: The kids are playing.\", \"Definite: ...\"]}",
+            "Keep translations concise and idiomatic, not word-by-word unless necessary.",
+            "Return only JSON like:",
+            "{\"items\":[{\"label\":\"Singular\",\"sentence\":\"...\",\"translation\":\"...\"}]}",
           ].join(" "),
         },
       ],
@@ -68,8 +75,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    const lines = Array.isArray(parsed?.lines) ? parsed?.lines : [];
-    res.json({ lines });
+    const items = Array.isArray(parsed?.items)
+      ? parsed.items.filter(
+          (item) =>
+            item &&
+            typeof item.label === "string" &&
+            typeof item.sentence === "string" &&
+            typeof item.translation === "string"
+        )
+      : [];
+    res.json({ items });
   } catch (err) {
     res.status(500).json({ error: "Failed to generate examples" });
   }

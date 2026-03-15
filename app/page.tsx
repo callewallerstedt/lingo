@@ -59,6 +59,13 @@ type SuggestionPayload = {
 };
 
 type VocabScope = "chat" | "common" | "scenario" | "topic";
+type ThemeMode = "dark" | "light";
+
+type ExampleItem = {
+  label: string;
+  sentence: string;
+  translation: string;
+};
 
 export default function Home() {
   const [authUser, setAuthUser] = useState<User | null>(null);
@@ -71,6 +78,7 @@ export default function Home() {
   const [showLanguageModal, setShowLanguageModal] = useState<boolean>(false);
   const [newLanguageInput, setNewLanguageInput] = useState<string>("");
   const [addLanguageOpen, setAddLanguageOpen] = useState<boolean>(false);
+  const [theme, setTheme] = useState<ThemeMode>("dark");
 
   const [language, setLanguage] = useState<string | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty>("easy");
@@ -117,13 +125,13 @@ export default function Home() {
   const [showTopicStarredOnly, setShowTopicStarredOnly] = useState<boolean>(false);
   const [showTopicModal, setShowTopicModal] = useState<boolean>(false);
   const [topicInput, setTopicInput] = useState<string>("");
-  const [exampleMap, setExampleMap] = useState<Record<string, string[]>>({});
+  const [exampleMap, setExampleMap] = useState<Record<string, ExampleItem[]>>({});
   const [exampleLoading, setExampleLoading] = useState<Record<string, boolean>>({});
   const [speechLoadingKey, setSpeechLoadingKey] = useState<string | null>(null);
   const [speechPlayingKey, setSpeechPlayingKey] = useState<string | null>(null);
   const [exampleModal, setExampleModal] = useState<{
     word: string;
-    lines: string[];
+    items: ExampleItem[];
     scope: VocabScope;
     scenarioId?: string | null;
   } | null>(null);
@@ -164,6 +172,7 @@ export default function Home() {
     const savedScenarioVocab = localStorage.getItem("lingoarc_scenario_vocab");
     const savedTopicVocab = localStorage.getItem("lingoarc_topic_vocab");
     const savedUsername = localStorage.getItem("lingoarc_username");
+    const savedTheme = localStorage.getItem("lingoarc_theme");
     if (savedVocab) {
       try {
         const parsed = JSON.parse(savedVocab) as VocabEntry[];
@@ -213,6 +222,9 @@ export default function Home() {
     if (savedUsername) {
       setUsername(savedUsername);
     }
+    if (savedTheme === "light" || savedTheme === "dark") {
+      setTheme(savedTheme);
+    }
   }, []);
 
   useEffect(() => {
@@ -225,6 +237,11 @@ export default function Home() {
       speechCacheRef.current.clear();
     };
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem("lingoarc_theme", theme);
+    document.body.dataset.theme = theme;
+  }, [theme]);
 
   useEffect(() => {
     messagesStateRef.current = messages;
@@ -1901,12 +1918,12 @@ export default function Home() {
     const key = exampleKey(scope, word, scenarioId);
     const cached = exampleMap[key];
     if (cached && cached.length) {
-      setExampleModal({ word, lines: cached, scope, scenarioId });
+      setExampleModal({ word, items: cached, scope, scenarioId });
       return;
     }
     if (exampleLoading[key]) return;
     setExampleLoading((prev) => ({ ...prev, [key]: true }));
-    setExampleModal({ word, lines: [], scope, scenarioId });
+    setExampleModal({ word, items: [], scope, scenarioId });
     try {
       const res = await fetch("/api/examples", {
         method: "POST",
@@ -1914,11 +1931,19 @@ export default function Home() {
         body: JSON.stringify({ language, word }),
       });
       if (!res.ok) return;
-      const data = (await res.json()) as { lines?: string[] };
-      const lines = Array.isArray(data.lines) ? data.lines : [];
-      setExampleMap((prev) => ({ ...prev, [key]: lines }));
-      if (lines.length) {
-        setExampleModal({ word, lines, scope, scenarioId });
+      const data = (await res.json()) as { items?: ExampleItem[] };
+      const items = Array.isArray(data.items)
+        ? data.items.filter(
+            (item) =>
+              item &&
+              typeof item.label === "string" &&
+              typeof item.sentence === "string" &&
+              typeof item.translation === "string"
+          )
+        : [];
+      setExampleMap((prev) => ({ ...prev, [key]: items }));
+      if (items.length) {
+        setExampleModal({ word, items, scope, scenarioId });
       }
     } finally {
       setExampleLoading((prev) => ({ ...prev, [key]: false }));
@@ -3249,98 +3274,121 @@ export default function Home() {
         <div className="brand">
           <button type="button" className="brand-button" onClick={() => setView("dashboard")}>
             <span className="brand-name">NeoLingo</span>
+            <span className="brand-tag">Calm practice. Fast progress.</span>
           </button>
         </div>
 
-        {authUser ? (
-          <div className="header-controls">
-            <div className="control-group">
-              <div className="control-item">
-                <label className="control-label">Language</label>
-                <select
-                  className="control-select"
-                  value={language || ""}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    if (value === "__add__") {
-                      setAddLanguageOpen(true);
-                      return;
-                    }
-                    setAddLanguageOpen(false);
-                    if (value) {
-                      void saveLanguagePreference(value);
-                    }
-                  }}
-                >
-                  {languageOptions.length === 0 ? (
-                    <option value="">Select language</option>
-                  ) : null}
-                  {languageOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                  <option value="__add__">+ Add new language</option>
-                </select>
-                {addLanguageOpen ? (
-                  <div className="language-add">
-                    <input
-                      type="text"
-                      className="language-input"
-                      value={newLanguageInput}
-                      onChange={(event) => setNewLanguageInput(event.target.value)}
-                      placeholder="Add language"
-                    />
-                    <button
-                      type="button"
-                      className="language-save-btn"
-                      onClick={() => void saveLanguagePreference(newLanguageInput)}
-                    >
-                      Save
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="control-item">
-                <label className="control-label">Difficulty</label>
-                <div className="difficulty-controls">
-                  <button
-                    type="button"
-                    className={`difficulty-btn ${difficulty === "easy" ? "active" : ""}`}
-                    onClick={() => setDifficulty("easy")}
-                  >
-                    Easy
-                  </button>
-                  <button
-                    type="button"
-                    className={`difficulty-btn ${difficulty === "medium" ? "active" : ""}`}
-                    onClick={() => setDifficulty("medium")}
-                  >
-                    Medium
-                  </button>
-                  <button
-                    type="button"
-                    className={`difficulty-btn ${difficulty === "hard" ? "active" : ""}`}
-                    onClick={() => setDifficulty("hard")}
-                  >
-                    Hard
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="user-section">
-              <div className="user-info">
-                <span className="user-points">Points {totalPoints()}</span>
-                <span className="user-name">{profileName || username || authUser.email}</span>
-              </div>
-              <button type="button" className="signout-btn" onClick={handleLogout}>
-                Sign out
+        <div className="header-controls">
+          <div className="control-item compact">
+            <label className="control-label">Theme</label>
+            <div className="difficulty-controls theme-toggle" role="tablist" aria-label="Theme">
+              <button
+                type="button"
+                className={`difficulty-btn ${theme === "dark" ? "active" : ""}`}
+                onClick={() => setTheme("dark")}
+              >
+                Dark
+              </button>
+              <button
+                type="button"
+                className={`difficulty-btn ${theme === "light" ? "active" : ""}`}
+                onClick={() => setTheme("light")}
+              >
+                Light
               </button>
             </div>
           </div>
-        ) : null}
+
+          {authUser ? (
+            <>
+              <div className="control-group">
+                <div className="control-item">
+                  <label className="control-label">Language</label>
+                  <select
+                    className="control-select"
+                    value={language || ""}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (value === "__add__") {
+                        setAddLanguageOpen(true);
+                        return;
+                      }
+                      setAddLanguageOpen(false);
+                      if (value) {
+                        void saveLanguagePreference(value);
+                      }
+                    }}
+                  >
+                    {languageOptions.length === 0 ? (
+                      <option value="">Select language</option>
+                    ) : null}
+                    {languageOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                    <option value="__add__">+ Add new language</option>
+                  </select>
+                  {addLanguageOpen ? (
+                    <div className="language-add">
+                      <input
+                        type="text"
+                        className="language-input"
+                        value={newLanguageInput}
+                        onChange={(event) => setNewLanguageInput(event.target.value)}
+                        placeholder="Add language"
+                      />
+                      <button
+                        type="button"
+                        className="language-save-btn"
+                        onClick={() => void saveLanguagePreference(newLanguageInput)}
+                      >
+                        Save
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="control-item">
+                  <label className="control-label">Difficulty</label>
+                  <div className="difficulty-controls">
+                    <button
+                      type="button"
+                      className={`difficulty-btn ${difficulty === "easy" ? "active" : ""}`}
+                      onClick={() => setDifficulty("easy")}
+                    >
+                      Easy
+                    </button>
+                    <button
+                      type="button"
+                      className={`difficulty-btn ${difficulty === "medium" ? "active" : ""}`}
+                      onClick={() => setDifficulty("medium")}
+                    >
+                      Medium
+                    </button>
+                    <button
+                      type="button"
+                      className={`difficulty-btn ${difficulty === "hard" ? "active" : ""}`}
+                      onClick={() => setDifficulty("hard")}
+                    >
+                      Hard
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="user-section">
+                <div className="user-info">
+                  <span className="user-points">Points {totalPoints()}</span>
+                  <span className="user-name">{profileName || username || authUser.email}</span>
+                </div>
+                <button type="button" className="signout-btn" onClick={handleLogout}>
+                  Sign out
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
       </header>
 
       <main className="main-area">
@@ -3622,22 +3670,23 @@ export default function Home() {
               </button>
             </div>
             <div className="vocab-modal-body">
-              {exampleModal.lines.length ? (
+              {exampleModal.items.length ? (
                 <div className="vocab-examples-list">
-                  {exampleModal.lines.map((line, index) => {
-                    const parts = line.split(":");
-                    const label = parts.shift()?.trim() || "";
-                    const sentence = parts.join(":").trim();
+                  <div className="vocab-examples-note">
+                    Tap any word in the example sentence to save it to your study list.
+                  </div>
+                  {exampleModal.items.map((item, index) => {
                     return (
                       <div key={`${exampleModal.word}-${index}`} className="vocab-example-line">
-                        {label ? <strong>{label}:</strong> : null}{" "}
-                        {sentence
-                          ? renderClickableTokens(sentence, `ex-${index}`, undefined, {
+                        <div className="vocab-example-label">{item.label}</div>
+                        <div className="vocab-example-sentence">
+                          {renderClickableTokens(item.sentence, `ex-${index}`, undefined, {
                               scope: exampleModal.scope,
                               scenarioId: exampleModal.scenarioId,
-                              sentence,
-                            })
-                          : null}
+                              sentence: item.sentence,
+                            })}
+                        </div>
+                        <div className="vocab-example-translation">{item.translation}</div>
                       </div>
                     );
                   })}
