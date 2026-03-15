@@ -41,6 +41,27 @@ create table if not exists user_vocab (
   unique (user_id, language, scope, scenario_id, word_key)
 );
 
+create table if not exists surge_progress (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users on delete cascade,
+  language text not null,
+  item_key text not null,
+  item_text text not null,
+  translation text not null,
+  item_type text not null,
+  status text not null default 'learning',
+  stage integer not null default 0,
+  times_seen integer not null default 0,
+  times_correct integer not null default 0,
+  last_result text,
+  last_direction text,
+  last_reviewed_at timestamptz,
+  next_review_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, language, item_key)
+);
+
 alter table profiles add column if not exists languages text[] not null default '{}';
 alter table profiles add column if not exists active_language text;
 alter table user_vocab add column if not exists language text;
@@ -54,11 +75,27 @@ alter table user_vocab add column if not exists count integer not null default 1
 alter table user_vocab add column if not exists last_clicked timestamptz not null default now();
 alter table user_vocab add column if not exists archived boolean not null default false;
 alter table user_vocab add column if not exists created_at timestamptz not null default now();
+alter table surge_progress add column if not exists language text;
+alter table surge_progress add column if not exists item_key text;
+alter table surge_progress add column if not exists item_text text;
+alter table surge_progress add column if not exists translation text;
+alter table surge_progress add column if not exists item_type text;
+alter table surge_progress add column if not exists status text not null default 'learning';
+alter table surge_progress add column if not exists stage integer not null default 0;
+alter table surge_progress add column if not exists times_seen integer not null default 0;
+alter table surge_progress add column if not exists times_correct integer not null default 0;
+alter table surge_progress add column if not exists last_result text;
+alter table surge_progress add column if not exists last_direction text;
+alter table surge_progress add column if not exists last_reviewed_at timestamptz;
+alter table surge_progress add column if not exists next_review_at timestamptz;
+alter table surge_progress add column if not exists created_at timestamptz not null default now();
+alter table surge_progress add column if not exists updated_at timestamptz not null default now();
 
 alter table profiles enable row level security;
 alter table scenario_progress enable row level security;
 alter table scenario_attempts enable row level security;
 alter table user_vocab enable row level security;
+alter table surge_progress enable row level security;
 
 create policy "Profiles are self readable"
   on profiles for select
@@ -106,4 +143,16 @@ create policy "Vocab is self updatable"
 
 create policy "Vocab is self deletable"
   on user_vocab for delete
+  using (auth.uid() = user_id);
+
+create policy "Surge progress is self readable"
+  on surge_progress for select
+  using (auth.uid() = user_id);
+
+create policy "Surge progress is self writable"
+  on surge_progress for insert
+  with check (auth.uid() = user_id);
+
+create policy "Surge progress is self updatable"
+  on surge_progress for update
   using (auth.uid() = user_id);

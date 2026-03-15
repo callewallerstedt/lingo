@@ -5,6 +5,23 @@ import type { User } from "@supabase/supabase-js";
 import type { Difficulty } from "../lib/store";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { SCENARIOS, type ScenarioDefinition } from "../lib/scenarios";
+import {
+  SURGE_SESSION_KEY,
+  createEmptySurgeSession,
+  dedupeSurgeItems,
+  getDirectionForStage,
+  getNextReviewAtForStage,
+  normalizeSurgeAnswer,
+  normalizeSurgeKey,
+  shuffleList,
+  uniqueStrings,
+  type SurgeDirection,
+  type SurgeItem,
+  type SurgePhase,
+  type SurgeProgressRecord,
+  type SurgeSession,
+  type SurgeStatus,
+} from "../lib/surge";
 
 const TASKS_PER_SCENARIO = 10;
 
@@ -58,7 +75,8 @@ type SuggestionPayload = {
   suggestion: string;
 };
 
-type VocabScope = "chat" | "common" | "scenario" | "topic";
+type VocabScope = "chat" | "common" | "scenario" | "topic" | "surge";
+type ExampleScope = "chat" | "common" | "scenario" | "topic";
 type ThemeMode = "dark" | "light";
 
 type ExampleItem = {
@@ -86,7 +104,7 @@ export default function Home() {
   const [loadingProgress, setLoadingProgress] = useState<boolean>(false);
 
   const [view, setView] = useState<
-    "dashboard" | "chat" | "common" | "scenario-vocab" | "scenario-detail" | "topic-detail"
+    "dashboard" | "chat" | "common" | "scenario-vocab" | "scenario-detail" | "topic-detail" | "surge"
   >("dashboard");
   const [activeScenario, setActiveScenario] = useState<ScenarioDefinition | null>(null);
   const [taskText, setTaskText] = useState<string>("");
@@ -132,7 +150,7 @@ export default function Home() {
   const [exampleModal, setExampleModal] = useState<{
     word: string;
     items: ExampleItem[];
-    scope: VocabScope;
+    scope: ExampleScope;
     scenarioId?: string | null;
   } | null>(null);
   const [scenarioVocabMap, setScenarioVocabMap] = useState<Record<string, StudyPack>>({});
@@ -146,9 +164,15 @@ export default function Home() {
   const [showStudyArchivedOnly, setShowStudyArchivedOnly] = useState<boolean>(false);
   const [showScenarioStarredOnly, setShowScenarioStarredOnly] = useState<boolean>(false);
   const [holdDeleteId, setHoldDeleteId] = useState<string | null>(null);
+  const [surgeProgressMap, setSurgeProgressMap] = useState<Record<string, SurgeProgressRecord>>({});
+  const [surgeSession, setSurgeSession] = useState<SurgeSession | null>(null);
+  const [surgeLoading, setSurgeLoading] = useState<boolean>(false);
+  const [surgeError, setSurgeError] = useState<string | null>(null);
+  const [surgeSavedAt, setSurgeSavedAt] = useState<number>(0);
 
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const surgeInputRef = useRef<HTMLInputElement | null>(null);
   const activeTargetRef = useRef<HTMLElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const ignoreWindowClickRef = useRef<boolean>(false);
@@ -273,6 +297,18 @@ export default function Home() {
     localStorage.setItem("lingoarc_topic_vocab", JSON.stringify(topicVocabMap));
   }, [topicVocabMap]);
 
+  useEffect(() => {
+    if (!authUser || !language) {
+      localStorage.removeItem(SURGE_SESSION_KEY);
+      return;
+    }
+    if (!surgeSession || surgeSession.language !== language) {
+      localStorage.removeItem(SURGE_SESSION_KEY);
+      return;
+    }
+    localStorage.setItem(SURGE_SESSION_KEY, JSON.stringify(surgeSession));
+  }, [authUser, language, surgeSession]);
+
 
   useEffect(() => {
     localStorage.setItem("lingoarc_vocab_front", vocabFront);
@@ -295,6 +331,38 @@ export default function Home() {
     if (!language) return;
     if (authUser) {
       void loadUserVocab(language);
+      void loadSurgeProgress(language);
+      const savedSession = localStorage.getItem(SURGE_SESSION_KEY);
+      if (!savedSession) {
+        setSurgeSession(null);
+      } else {
+        try {
+          const parsed = JSON.parse(savedSession) as SurgeSession;
+          if (parsed && parsed.language === language) {
+            setSurgeSession({
+              ...createEmptySurgeSession(language),
+              ...parsed,
+              language,
+              activeRound: Array.isArray(parsed.activeRound) ? parsed.activeRound : [],
+              reserve: Array.isArray(parsed.reserve) ? parsed.reserve : [],
+              reviewQueue: Array.isArray(parsed.reviewQueue) ? parsed.reviewQueue : [],
+              typingQueue: Array.isArray(parsed.typingQueue) ? parsed.typingQueue : [],
+              delayedReviewQueue: Array.isArray(parsed.delayedReviewQueue) ? parsed.delayedReviewQueue : [],
+              recentlySeen: Array.isArray(parsed.recentlySeen) ? parsed.recentlySeen : [],
+              previewSeenKeys: Array.isArray(parsed.previewSeenKeys) ? parsed.previewSeenKeys : [],
+              matchTargets: Array.isArray(parsed.matchTargets) ? parsed.matchTargets : [],
+              matchTranslations: Array.isArray(parsed.matchTranslations) ? parsed.matchTranslations : [],
+              matchedKeys: Array.isArray(parsed.matchedKeys) ? parsed.matchedKeys : [],
+            });
+          } else {
+            localStorage.removeItem(SURGE_SESSION_KEY);
+            setSurgeSession(null);
+          }
+        } catch {
+          localStorage.removeItem(SURGE_SESSION_KEY);
+          setSurgeSession(null);
+        }
+      }
       return;
     }
     const savedStudy = localStorage.getItem("lingoarc_study_pack");
@@ -360,6 +428,8 @@ export default function Home() {
     } catch {
       setTopicVocabMap({});
     }
+    setSurgeProgressMap({});
+    setSurgeSession(null);
   }, [authUser, language]);
 
   useEffect(() => {
@@ -425,6 +495,8 @@ export default function Home() {
       setStudyPack(null);
       setScenarioVocabMap({});
       setTopicVocabMap({});
+      setSurgeProgressMap({});
+      setSurgeSession(null);
       setProfileName("");
       return;
     }
@@ -685,6 +757,72 @@ export default function Home() {
       };
     });
     setTopicVocabMap(dedupedTopicMap);
+  }
+
+  async function loadSurgeProgress(activeLanguage: string) {
+    if (!authUser) return;
+    const { data, error } = await supabase
+      .from("surge_progress")
+      .select(
+        "item_key, item_text, translation, item_type, status, stage, times_seen, times_correct, last_result, last_direction, last_reviewed_at, next_review_at, created_at, updated_at"
+      )
+      .eq("user_id", authUser.id)
+      .eq("language", activeLanguage);
+
+    if (error) {
+      setSurgeProgressMap({});
+      return;
+    }
+
+    const nextMap: Record<string, SurgeProgressRecord> = {};
+    (data || []).forEach((row) => {
+      if (!row.item_key) return;
+      nextMap[row.item_key] = {
+        itemKey: row.item_key,
+        itemText: row.item_text,
+        translation: row.translation,
+        itemType: row.item_type === "phrase" ? "phrase" : "word",
+        status: row.status === "known" ? "known" : "learning",
+        stage: Number.isFinite(row.stage) ? Math.max(0, Math.min(6, Number(row.stage))) : 0,
+        timesSeen: Number(row.times_seen) || 0,
+        timesCorrect: Number(row.times_correct) || 0,
+        lastResult: row.last_result === "wrong" ? "wrong" : row.last_result === "correct" ? "correct" : null,
+        lastDirection:
+          row.last_direction === "english_to_target" || row.last_direction === "target_to_english"
+            ? row.last_direction
+            : null,
+        lastReviewedAt: row.last_reviewed_at ? Date.parse(row.last_reviewed_at) : null,
+        nextReviewAt: row.next_review_at ? Date.parse(row.next_review_at) : null,
+        createdAt: row.created_at ? Date.parse(row.created_at) : null,
+        updatedAt: row.updated_at ? Date.parse(row.updated_at) : null,
+      };
+    });
+    setSurgeProgressMap(nextMap);
+  }
+
+  async function upsertSurgeProgress(records: SurgeProgressRecord[]) {
+    if (!authUser || !language || !records.length) return;
+    const payload = records.map((record) => ({
+      user_id: authUser.id,
+      language,
+      item_key: record.itemKey,
+      item_text: record.itemText,
+      translation: record.translation,
+      item_type: record.itemType,
+      status: record.status,
+      stage: record.stage,
+      times_seen: record.timesSeen,
+      times_correct: record.timesCorrect,
+      last_result: record.lastResult ?? null,
+      last_direction: record.lastDirection ?? null,
+      last_reviewed_at: record.lastReviewedAt ? new Date(record.lastReviewedAt).toISOString() : null,
+      next_review_at: record.nextReviewAt ? new Date(record.nextReviewAt).toISOString() : null,
+      created_at: record.createdAt ? new Date(record.createdAt).toISOString() : new Date().toISOString(),
+      updated_at: new Date(record.updatedAt ?? Date.now()).toISOString(),
+    }));
+    await supabase.from("surge_progress").upsert(payload, {
+      onConflict: "user_id,language,item_key",
+    });
   }
 
   async function upsertUserVocab(rows: Array<{
@@ -1841,7 +1979,7 @@ export default function Home() {
     return { merged, added };
   }
 
-  function exampleKey(scope: VocabScope, word: string, scenarioId?: string | null) {
+  function exampleKey(scope: ExampleScope, word: string, scenarioId?: string | null) {
     const base = normalizeWord(word) || word.toLowerCase();
     return `${scope}:${scenarioId || "none"}:${base}`;
   }
@@ -1913,7 +2051,550 @@ export default function Home() {
     }
   }
 
-  async function generateExamples(scope: VocabScope, word: string, scenarioId?: string | null) {
+  function toSurgeItem(record: SurgeProgressRecord): SurgeItem {
+    return {
+      itemKey: record.itemKey,
+      text: record.itemText,
+      translation: record.translation,
+      itemType: record.itemType,
+    };
+  }
+
+  function syncSurgeRecord(item: SurgeItem, updater: (current: SurgeProgressRecord) => SurgeProgressRecord) {
+    const now = Date.now();
+    let nextRecord: SurgeProgressRecord | null = null;
+    setSurgeProgressMap((prev) => {
+      const current = prev[item.itemKey] || {
+        itemKey: item.itemKey,
+        itemText: item.text,
+        translation: item.translation,
+        itemType: item.itemType,
+        status: "learning" as const,
+        stage: 0,
+        timesSeen: 0,
+        timesCorrect: 0,
+        lastResult: null,
+        lastDirection: null,
+        lastReviewedAt: null,
+        nextReviewAt: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      nextRecord = updater({
+        ...current,
+        itemText: item.text || current.itemText,
+        translation: item.translation || current.translation,
+        itemType: item.itemType || current.itemType,
+        updatedAt: now,
+      });
+      return nextRecord ? { ...prev, [item.itemKey]: nextRecord } : prev;
+    });
+    if (nextRecord) {
+      void upsertSurgeProgress([nextRecord]);
+      setSurgeSavedAt(now);
+    }
+    return nextRecord;
+  }
+
+  function getSurgeUsedKeys(session: SurgeSession) {
+    return new Set(
+      [
+        ...session.activeRound.map((item) => item.itemKey),
+        ...session.reserve.map((item) => item.itemKey),
+        ...session.reviewQueue.map((item) => item.itemKey),
+        ...session.typingQueue.map((item) => item.itemKey),
+        ...session.delayedReviewQueue.map((item) => item.item.itemKey),
+        ...session.recentlySeen,
+      ].filter(Boolean)
+    );
+  }
+
+  function getDueSurgeItems(exclude: Set<string>) {
+    const now = Date.now();
+    return Object.values(surgeProgressMap)
+      .filter((record) => record.status !== "known")
+      .filter((record) => Boolean(record.nextReviewAt) && (record.nextReviewAt || 0) <= now)
+      .filter((record) => !exclude.has(record.itemKey))
+      .sort((a, b) => (a.nextReviewAt || 0) - (b.nextReviewAt || 0))
+      .map((record) => toSurgeItem(record));
+  }
+
+  async function fetchSurgeBatch(session: SurgeSession, count = 10) {
+    if (!language) return [];
+    const knownTexts = Object.values(surgeProgressMap)
+      .filter((record) => record.status === "known")
+      .map((record) => record.itemText);
+    const existingTexts = [
+      ...session.activeRound.map((item) => item.text),
+      ...session.reserve.map((item) => item.text),
+      ...session.reviewQueue.map((item) => item.text),
+      ...session.typingQueue.map((item) => item.text),
+      ...session.delayedReviewQueue.map((item) => item.item.text),
+    ];
+    const recentTexts = session.recentlySeen
+      .map((key) => surgeProgressMap[key]?.itemText || session.activeRound.find((item) => item.itemKey === key)?.text)
+      .filter(Boolean) as string[];
+
+    const res = await fetch("/api/surge-items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        language,
+        count,
+        existing: uniqueStrings(existingTexts),
+        known: uniqueStrings(knownTexts),
+        recent: uniqueStrings(recentTexts),
+        difficulty,
+      }),
+    });
+
+    if (!res.ok) {
+      return [];
+    }
+
+    const data = (await res.json()) as {
+      items?: Array<{ text: string; translation: string; itemType: "word" | "phrase"; itemKey: string }>;
+    };
+
+    return dedupeSurgeItems(
+      Array.isArray(data.items)
+        ? data.items
+            .filter(
+              (item) =>
+                item &&
+                typeof item.text === "string" &&
+                typeof item.translation === "string" &&
+                typeof item.itemKey === "string"
+            )
+            .map((item) => ({
+              itemKey: item.itemKey || normalizeSurgeKey(item.text),
+              text: item.text.trim(),
+              translation: item.translation.trim(),
+              itemType: item.itemType === "phrase" ? "phrase" : "word",
+            }))
+        : []
+    );
+  }
+
+  async function ensureSurgeReserve(session: SurgeSession) {
+    if (session.reserve.length >= 5) return session;
+    const fetched = await fetchSurgeBatch(session, 10);
+    if (!fetched.length) return session;
+    const usedKeys = getSurgeUsedKeys(session);
+    const mergedReserve = dedupeSurgeItems([
+      ...session.reserve,
+      ...fetched.filter((item) => !usedKeys.has(item.itemKey)),
+    ]);
+    return {
+      ...session,
+      reserve: mergedReserve,
+    };
+  }
+
+  async function fillSurgeRound(session: SurgeSession, baseRound: SurgeItem[] = []) {
+    let nextSession = { ...session, activeRound: [...baseRound] };
+    while (nextSession.activeRound.length < 5) {
+      const usedKeys = getSurgeUsedKeys(nextSession);
+      nextSession.activeRound.forEach((item) => usedKeys.add(item.itemKey));
+      const due = getDueSurgeItems(usedKeys);
+      if (due.length) {
+        nextSession = {
+          ...nextSession,
+          activeRound: [...nextSession.activeRound, due[0]],
+        };
+        continue;
+      }
+
+      nextSession = await ensureSurgeReserve(nextSession);
+      const nextReserveItem = nextSession.reserve.find((item) => !usedKeys.has(item.itemKey));
+      if (!nextReserveItem) break;
+      nextSession = {
+        ...nextSession,
+        reserve: nextSession.reserve.filter((item) => item.itemKey !== nextReserveItem.itemKey),
+        activeRound: [...nextSession.activeRound, nextReserveItem],
+      };
+    }
+    return nextSession;
+  }
+
+  function createMatchSession(session: SurgeSession) {
+    const keys = session.activeRound.map((item) => item.itemKey);
+    return {
+      ...session,
+      phase: "match" as const,
+      matchTargets: shuffleList(keys),
+      matchTranslations: shuffleList(keys),
+      matchedKeys: [],
+      selectedTargetKey: null,
+      selectedTranslationKey: null,
+    };
+  }
+
+  function createTypingSession(session: SurgeSession, queue: SurgeItem[]) {
+    return {
+      ...session,
+      phase: "typing" as const,
+      typingQueue: dedupeSurgeItems(queue),
+      delayedReviewQueue: [],
+      typingInput: "",
+      typingFeedback: null,
+      selectedTargetKey: null,
+      selectedTranslationKey: null,
+    };
+  }
+
+  async function buildNextSurgeRound(session: SurgeSession, roundItems: SurgeItem[] = []) {
+    const filled = await fillSurgeRound(
+      {
+        ...session,
+        phase: "preview",
+        activeRound: [],
+        previewIndex: 0,
+        previewRevealed: false,
+        previewSeenKeys: [],
+        matchTargets: [],
+        matchTranslations: [],
+        matchedKeys: [],
+        selectedTargetKey: null,
+        selectedTranslationKey: null,
+        typingQueue: [],
+        delayedReviewQueue: [],
+        typingInput: "",
+        typingFeedback: null,
+      },
+      roundItems
+    );
+    return {
+      ...filled,
+      recentlySeen: uniqueStrings([
+        ...filled.recentlySeen,
+        ...filled.activeRound.map((item) => item.itemKey),
+      ]).slice(-120),
+    };
+  }
+
+  async function startSurgeSession(forceNew = false) {
+    if (!authUser || !language) {
+      setSurgeError("Choose a language before starting Surge.");
+      return;
+    }
+    setSurgeLoading(true);
+    setSurgeError(null);
+    try {
+      if (!forceNew && surgeSession && surgeSession.language === language) {
+        setView("surge");
+        return;
+      }
+      let nextSession = createEmptySurgeSession(language);
+      nextSession = await ensureSurgeReserve(nextSession);
+      nextSession = await buildNextSurgeRound(nextSession);
+      if (!nextSession.activeRound.length) {
+        setSurgeError("Surge could not load new items right now.");
+        return;
+      }
+      setSurgeSession(nextSession);
+      setView("surge");
+    } finally {
+      setSurgeLoading(false);
+    }
+  }
+
+  function getCurrentSurgePrompt(session: SurgeSession | null) {
+    if (!session) return null;
+    if (session.phase === "preview") {
+      return session.activeRound[session.previewIndex] || null;
+    }
+    if (session.phase === "typing") {
+      return session.typingQueue[0] || null;
+    }
+    return null;
+  }
+
+  function noteSurgeExposure(item: SurgeItem) {
+    syncSurgeRecord(item, (current) => ({
+      ...current,
+      status: current.status,
+      timesSeen: current.timesSeen + 1,
+      updatedAt: Date.now(),
+    }));
+  }
+
+  async function revealSurgePreview() {
+    if (!surgeSession) return;
+    const current = surgeSession.activeRound[surgeSession.previewIndex];
+    if (!current) return;
+    let nextSession = surgeSession;
+    if (!surgeSession.previewSeenKeys.includes(current.itemKey)) {
+      noteSurgeExposure(current);
+      nextSession = {
+        ...surgeSession,
+        previewSeenKeys: [...surgeSession.previewSeenKeys, current.itemKey],
+      };
+    }
+    setSurgeSession({
+      ...nextSession,
+      previewRevealed: true,
+    });
+  }
+
+  async function advanceSurgePreview() {
+    if (!surgeSession) return;
+    const isLast = surgeSession.previewIndex >= surgeSession.activeRound.length - 1;
+    if (!isLast) {
+      setSurgeSession({
+        ...surgeSession,
+        previewIndex: surgeSession.previewIndex + 1,
+        previewRevealed: false,
+      });
+      return;
+    }
+    setSurgeSession(createMatchSession(surgeSession));
+  }
+
+  async function markSurgeKnown(item: SurgeItem) {
+    if (!surgeSession) return;
+    const now = Date.now();
+    syncSurgeRecord(item, (current) => ({
+      ...current,
+      status: "known",
+      nextReviewAt: null,
+      lastReviewedAt: now,
+      updatedAt: now,
+    }));
+
+    let nextSession: SurgeSession = {
+      ...surgeSession,
+      activeRound: surgeSession.activeRound.filter((entry) => entry.itemKey !== item.itemKey),
+      reserve: surgeSession.reserve.filter((entry) => entry.itemKey !== item.itemKey),
+      reviewQueue: surgeSession.reviewQueue.filter((entry) => entry.itemKey !== item.itemKey),
+      typingQueue: surgeSession.typingQueue.filter((entry) => entry.itemKey !== item.itemKey),
+      delayedReviewQueue: surgeSession.delayedReviewQueue.filter((entry) => entry.item.itemKey !== item.itemKey),
+      matchedKeys: surgeSession.matchedKeys.filter((key) => key !== item.itemKey),
+      matchTargets: surgeSession.matchTargets.filter((key) => key !== item.itemKey),
+      matchTranslations: surgeSession.matchTranslations.filter((key) => key !== item.itemKey),
+      selectedTargetKey: surgeSession.selectedTargetKey === item.itemKey ? null : surgeSession.selectedTargetKey,
+      selectedTranslationKey:
+        surgeSession.selectedTranslationKey === item.itemKey ? null : surgeSession.selectedTranslationKey,
+      recentlySeen: surgeSession.recentlySeen.filter((key) => key !== item.itemKey),
+      previewSeenKeys: surgeSession.previewSeenKeys.filter((key) => key !== item.itemKey),
+    };
+
+    if (nextSession.phase === "preview") {
+      nextSession = await buildNextSurgeRound(nextSession, nextSession.activeRound);
+      nextSession.previewIndex = Math.min(nextSession.previewIndex, Math.max(nextSession.activeRound.length - 1, 0));
+      nextSession.previewRevealed = false;
+    } else if (nextSession.phase === "typing") {
+      if (!nextSession.typingQueue.length) {
+        if (nextSession.delayedReviewQueue.length) {
+          nextSession = {
+            ...nextSession,
+            typingQueue: nextSession.delayedReviewQueue.map((entry) => entry.item),
+            delayedReviewQueue: [],
+          };
+        } else {
+          nextSession = await buildNextSurgeRound(nextSession);
+        }
+      }
+    }
+
+    if (!nextSession.activeRound.length && nextSession.phase === "preview") {
+      nextSession = await buildNextSurgeRound(nextSession);
+    }
+
+    setSurgeSession(nextSession);
+  }
+
+  function getSurgeDirection(item: SurgeItem) {
+    const stage = surgeProgressMap[item.itemKey]?.stage ?? 0;
+    return getDirectionForStage(stage);
+  }
+
+  function releaseDelayedReviews(session: SurgeSession) {
+    const ready: SurgeItem[] = [];
+    const delayed = session.delayedReviewQueue
+      .map((entry) => ({
+        ...entry,
+        remainingSkips: entry.remainingSkips - 1,
+      }))
+      .filter((entry) => {
+        if (entry.remainingSkips <= 0) {
+          ready.push(entry.item);
+          return false;
+        }
+        return true;
+      });
+
+    return {
+      ...session,
+      delayedReviewQueue: delayed,
+      typingQueue: [...session.typingQueue, ...ready],
+    };
+  }
+
+  async function completeSurgeTypedStep() {
+    if (!surgeSession) return;
+    let nextSession: SurgeSession = {
+      ...surgeSession,
+      typingQueue: surgeSession.typingQueue.slice(1),
+      typingInput: "",
+      typingFeedback: null,
+    };
+    nextSession = releaseDelayedReviews(nextSession);
+    if (nextSession.typingQueue.length) {
+      setSurgeSession(nextSession);
+      return;
+    }
+    if (nextSession.delayedReviewQueue.length) {
+      const delayedItems = nextSession.delayedReviewQueue.map((entry) => entry.item);
+      setSurgeSession({
+        ...nextSession,
+        typingQueue: delayedItems,
+        delayedReviewQueue: [],
+      });
+      return;
+    }
+    const rebuilt = await buildNextSurgeRound(nextSession);
+    setSurgeSession(rebuilt);
+  }
+
+  async function submitSurgeTypedAnswer() {
+    if (!surgeSession) return;
+    const current = surgeSession.typingQueue[0];
+    if (!current || surgeSession.typingFeedback) return;
+    const currentRecord = surgeProgressMap[current.itemKey];
+    const direction = getDirectionForStage(currentRecord?.stage ?? 0);
+    const mode = direction === "target_to_english" ? "english" : "target";
+    const submitted = normalizeSurgeAnswer(surgeSession.typingInput, mode);
+    const expected = normalizeSurgeAnswer(
+      direction === "target_to_english" ? current.translation : current.text,
+      mode
+    );
+    const now = Date.now();
+
+    noteSurgeExposure(current);
+
+    if (submitted && submitted === expected) {
+      syncSurgeRecord(current, (record) => {
+        const nextStage = Math.min(record.stage + 1, 6);
+        return {
+          ...record,
+          stage: nextStage,
+          timesCorrect: record.timesCorrect + 1,
+          lastResult: "correct",
+          lastDirection: direction,
+          lastReviewedAt: now,
+          nextReviewAt: getNextReviewAtForStage(nextStage, now),
+          updatedAt: now,
+        };
+      });
+      setSurgeSession({
+        ...surgeSession,
+        typingFeedback: {
+          status: "correct",
+          expected: direction === "target_to_english" ? current.translation : current.text,
+          direction,
+        },
+      });
+      return;
+    }
+
+    syncSurgeRecord(current, (record) => {
+      const nextStage = Math.max(record.stage - 1, 0);
+      return {
+        ...record,
+        stage: nextStage,
+        lastResult: "wrong",
+        lastDirection: direction,
+        lastReviewedAt: now,
+        nextReviewAt: now + (nextStage <= 2 ? 10 * 60 * 1000 : 24 * 60 * 60 * 1000),
+        updatedAt: now,
+      };
+    });
+
+    setSurgeSession({
+      ...surgeSession,
+      delayedReviewQueue: [...surgeSession.delayedReviewQueue, { item: current, remainingSkips: 2 }],
+      typingFeedback: {
+        status: "wrong",
+        expected: direction === "target_to_english" ? current.translation : current.text,
+        direction,
+      },
+    });
+  }
+
+  async function completeSurgeMatchRound() {
+    if (!surgeSession) return;
+    const nextReviewQueue = dedupeSurgeItems([...surgeSession.reviewQueue, ...surgeSession.activeRound]).filter(
+      (item) => surgeProgressMap[item.itemKey]?.status !== "known"
+    );
+    const nextCycleCount = surgeSession.cycleCount + 1;
+    let nextSession: SurgeSession = {
+      ...surgeSession,
+      cycleCount: nextCycleCount,
+      reviewQueue: nextReviewQueue,
+      selectedTargetKey: null,
+      selectedTranslationKey: null,
+      matchedKeys: surgeSession.activeRound.map((item) => item.itemKey),
+    };
+
+    if (nextCycleCount % 2 === 0 && nextReviewQueue.length) {
+      nextSession = createTypingSession(nextSession, nextReviewQueue);
+      nextSession.reviewQueue = [];
+      setSurgeSession(nextSession);
+      return;
+    }
+
+    nextSession.reviewQueue = nextReviewQueue;
+    nextSession = await buildNextSurgeRound(nextSession);
+    setSurgeSession(nextSession);
+  }
+
+  async function chooseSurgeMatch(side: "target" | "translation", key: string) {
+    if (!surgeSession || surgeSession.phase !== "match") return;
+    if (surgeSession.matchedKeys.includes(key)) return;
+    const nextSession = {
+      ...surgeSession,
+      selectedTargetKey: side === "target" ? key : surgeSession.selectedTargetKey,
+      selectedTranslationKey: side === "translation" ? key : surgeSession.selectedTranslationKey,
+    };
+
+    if (!nextSession.selectedTargetKey || !nextSession.selectedTranslationKey) {
+      setSurgeSession(nextSession);
+      return;
+    }
+
+    if (nextSession.selectedTargetKey === nextSession.selectedTranslationKey) {
+      const matchedKeys = [...nextSession.matchedKeys, nextSession.selectedTargetKey];
+      const completed = matchedKeys.length >= nextSession.activeRound.length;
+      const resolvedSession = {
+        ...nextSession,
+        matchedKeys,
+        selectedTargetKey: null,
+        selectedTranslationKey: null,
+      };
+      setSurgeSession(resolvedSession);
+      if (completed) {
+        window.setTimeout(() => {
+          void completeSurgeMatchRound();
+        }, 220);
+      }
+      return;
+    }
+
+    setSurgeSession(nextSession);
+    window.setTimeout(() => {
+      setSurgeSession((current) => {
+        if (!current || current.phase !== "match") return current;
+        return {
+          ...current,
+          selectedTargetKey: null,
+          selectedTranslationKey: null,
+        };
+      });
+    }, 260);
+  }
+
+  async function generateExamples(scope: ExampleScope, word: string, scenarioId?: string | null) {
     if (!language) return;
     const key = exampleKey(scope, word, scenarioId);
     const cached = exampleMap[key];
@@ -2323,7 +3004,35 @@ export default function Home() {
     return Object.keys(topicVocabMap).sort((a, b) => a.localeCompare(b));
   }, [topicVocabMap]);
 
+  useEffect(() => {
+    if (surgeSession?.phase === "typing" && !surgeSession.typingFeedback) {
+      surgeInputRef.current?.focus();
+    }
+  }, [surgeSession]);
+
   const targetLabel = language || "Target";
+  const surgeDueCount = useMemo(() => {
+    const now = Date.now();
+    return Object.values(surgeProgressMap).filter(
+      (record) => record.status !== "known" && Boolean(record.nextReviewAt) && (record.nextReviewAt || 0) <= now
+    ).length;
+  }, [surgeProgressMap]);
+  const surgeMasteredCount = useMemo(() => {
+    return Object.values(surgeProgressMap).filter(
+      (record) => record.status === "known" || record.stage >= 6
+    ).length;
+  }, [surgeProgressMap]);
+  const surgeInSessionCount = useMemo(() => {
+    if (!surgeSession) return 0;
+    return dedupeSurgeItems([
+      ...surgeSession.activeRound,
+      ...surgeSession.reserve,
+      ...surgeSession.reviewQueue,
+      ...surgeSession.typingQueue,
+      ...surgeSession.delayedReviewQueue.map((entry) => entry.item),
+    ]).length;
+  }, [surgeSession]);
+  const currentSurgePrompt = useMemo(() => getCurrentSurgePrompt(surgeSession), [surgeSession]);
   const studyVisibleItems = useMemo(() => {
     const entries = studyPack?.entries ?? [];
     return entries
@@ -2371,6 +3080,253 @@ export default function Home() {
         );
       })}
     </div>
+  );
+
+  const surgeView = (
+    <section className="surge-shell">
+      <div className="subtle-back">
+        <button type="button" className="ghost subtle-back-btn" onClick={() => setView("dashboard")}>
+          Back
+        </button>
+      </div>
+
+      <div className="surge-header">
+        <div>
+          <div className="surge-kicker">Surge</div>
+          <h2>Stay in flow and build recall fast.</h2>
+          <p>
+            Preview five items, match them, then bring older items back through active recall.
+          </p>
+        </div>
+        <div className="surge-status">
+          <div className="surge-status-pill">Due now {surgeDueCount}</div>
+          <div className="surge-status-pill">In session {surgeInSessionCount}</div>
+          <div className="surge-status-pill">Mastered {surgeMasteredCount}</div>
+        </div>
+      </div>
+
+      {!language ? (
+        <div className="surge-panel">
+          <div className="home-vocab-empty">Choose a language before starting Surge.</div>
+        </div>
+      ) : surgeLoading ? (
+        <div className="surge-panel">
+          <div className="home-vocab-empty">Loading Surge...</div>
+        </div>
+      ) : !surgeSession ? (
+        <div className="surge-panel surge-empty">
+          <div>
+            <h3>Ready for a fast vocab sprint?</h3>
+            <p>Surge mixes previews, matching, and spaced recall so you can keep moving without setup.</p>
+          </div>
+          <button type="button" className="solid" onClick={() => void startSurgeSession(true)}>
+            Start Surge
+          </button>
+        </div>
+      ) : surgeSession.phase === "preview" && currentSurgePrompt ? (
+        <div className="surge-panel surge-preview">
+          <div className="surge-progress">
+            <span>Preview</span>
+            <span>
+              {surgeSession.previewIndex + 1}/{surgeSession.activeRound.length}
+            </span>
+          </div>
+          <button
+            type="button"
+            className={`surge-card ${surgeSession.previewRevealed ? "revealed" : ""}`}
+            onClick={() => {
+              if (!surgeSession.previewRevealed) {
+                void revealSurgePreview();
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key === " " || event.key === "Enter") {
+                event.preventDefault();
+                if (!surgeSession.previewRevealed) {
+                  void revealSurgePreview();
+                }
+              }
+            }}
+          >
+            <div className="surge-card-label">Meaning</div>
+            <div className="surge-card-translation">{currentSurgePrompt.translation}</div>
+            <div className="surge-card-label">Target</div>
+            <div className="surge-card-word">
+              {surgeSession.previewRevealed ? currentSurgePrompt.text : "Tap to reveal"}
+            </div>
+          </button>
+          <div className="surge-actions">
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => void playFlashcardAudio("surge", currentSurgePrompt.text)}
+            >
+              Pronounce
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => void markSurgeKnown(currentSurgePrompt)}
+            >
+              I know this...
+            </button>
+            <button
+              type="button"
+              className="solid"
+              onClick={() =>
+                surgeSession.previewRevealed ? void advanceSurgePreview() : void revealSurgePreview()
+              }
+            >
+              {surgeSession.previewRevealed ? "Next" : "Reveal"}
+            </button>
+          </div>
+        </div>
+      ) : surgeSession.phase === "match" ? (
+        <div className="surge-panel surge-match">
+          <div className="surge-progress">
+            <span>Match the pairs</span>
+            <span>
+              {surgeSession.matchedKeys.length}/{surgeSession.activeRound.length}
+            </span>
+          </div>
+          <div className="surge-match-grid">
+            <div className="surge-match-column">
+              {surgeSession.matchTargets.map((key) => {
+                const item = surgeSession.activeRound.find((entry) => entry.itemKey === key);
+                if (!item) return null;
+                const isMatched = surgeSession.matchedKeys.includes(key);
+                const isSelected = surgeSession.selectedTargetKey === key;
+                return (
+                  <button
+                    key={`target-${key}`}
+                    type="button"
+                    className={`surge-match-card${isMatched ? " matched" : ""}${isSelected ? " selected" : ""}`}
+                    onClick={() => void chooseSurgeMatch("target", key)}
+                    disabled={isMatched}
+                  >
+                    {item.text}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="surge-match-column">
+              {surgeSession.matchTranslations.map((key) => {
+                const item = surgeSession.activeRound.find((entry) => entry.itemKey === key);
+                if (!item) return null;
+                const isMatched = surgeSession.matchedKeys.includes(key);
+                const isSelected = surgeSession.selectedTranslationKey === key;
+                return (
+                  <button
+                    key={`translation-${key}`}
+                    type="button"
+                    className={`surge-match-card${isMatched ? " matched" : ""}${isSelected ? " selected" : ""}`}
+                    onClick={() => void chooseSurgeMatch("translation", key)}
+                    disabled={isMatched}
+                  >
+                    {item.translation}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : surgeSession.phase === "typing" && currentSurgePrompt ? (
+        <div className="surge-panel surge-typing">
+          <div className="surge-progress">
+            <span>{getSurgeDirection(currentSurgePrompt) === "target_to_english" ? "Type English" : `Type ${targetLabel}`}</span>
+            <span>{surgeSession.typingQueue.length} left</span>
+          </div>
+          <div className="surge-prompt-card">
+            <div className="surge-card-label">
+              {getSurgeDirection(currentSurgePrompt) === "target_to_english" ? targetLabel : "English"}
+            </div>
+            <div className="surge-prompt-text">
+              {getSurgeDirection(currentSurgePrompt) === "target_to_english"
+                ? currentSurgePrompt.text
+                : currentSurgePrompt.translation}
+            </div>
+            <div className="surge-prompt-sub">
+              {getSurgeDirection(currentSurgePrompt) === "target_to_english"
+                ? "Type the English meaning."
+                : `Type the answer in ${targetLabel}.`}
+            </div>
+          </div>
+          <div className="surge-input-wrap">
+            <input
+              ref={surgeInputRef}
+              type="text"
+              value={surgeSession.typingInput}
+              onChange={(event) =>
+                setSurgeSession((current) =>
+                  current
+                    ? {
+                        ...current,
+                        typingInput: event.target.value,
+                      }
+                    : current
+                )
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (surgeSession.typingFeedback) {
+                    void completeSurgeTypedStep();
+                  } else {
+                    void submitSurgeTypedAnswer();
+                  }
+                }
+              }}
+              placeholder={
+                getSurgeDirection(currentSurgePrompt) === "target_to_english"
+                  ? "Type the English meaning"
+                  : `Type in ${targetLabel}`
+              }
+              disabled={Boolean(surgeSession.typingFeedback)}
+            />
+          </div>
+          {surgeSession.typingFeedback ? (
+            <div className={`surge-feedback ${surgeSession.typingFeedback.status}`}>
+              {surgeSession.typingFeedback.status === "correct" ? "Correct" : "Not quite"}
+              <span>{surgeSession.typingFeedback.expected}</span>
+            </div>
+          ) : null}
+          <div className="surge-actions">
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => void playFlashcardAudio("surge", currentSurgePrompt.text)}
+            >
+              Pronounce
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => void markSurgeKnown(currentSurgePrompt)}
+            >
+              I know this...
+            </button>
+            <button
+              type="button"
+              className="solid"
+              onClick={() =>
+                surgeSession.typingFeedback ? void completeSurgeTypedStep() : void submitSurgeTypedAnswer()
+              }
+            >
+              {surgeSession.typingFeedback ? "Continue" : "Check"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="surge-panel">
+          <div className="home-vocab-empty">{surgeError || "Surge is ready when you are."}</div>
+        </div>
+      )}
+
+      {surgeError ? <div className="dashboard-alert">{surgeError}</div> : null}
+      {surgeSavedAt ? (
+        <div className="surge-footnote">Progress saved {new Date(surgeSavedAt).toLocaleTimeString()}</div>
+      ) : null}
+    </section>
   );
 
   const commonWordsView = (
@@ -3441,6 +4397,25 @@ export default function Home() {
                 </button>
               </div>
               <div className="scenario-grid">
+                <button
+                  type="button"
+                  className="scenario-card"
+                  onClick={() => void startSurgeSession(!surgeSession)}
+                  disabled={!language || surgeLoading}
+                >
+                  <div className="scenario-card-header">
+                    <div className="scenario-card-title">Surge</div>
+                    <div className="scenario-ring">
+                      <div className="scenario-ring-inner">{surgeDueCount}</div>
+                    </div>
+                  </div>
+                  <div className="scenario-card-body">
+                    {surgeSession ? "Continue smart spaced recall." : "Start a fast core-vocab flow."}
+                  </div>
+                  <div className="scenario-card-meta">
+                    {surgeSession ? "Continue Surge" : "Start Surge"} · In session {surgeInSessionCount} · Mastered {surgeMasteredCount}
+                  </div>
+                </button>
                 <button type="button" className="scenario-card" onClick={() => setView("common")}>
                   <div className="scenario-card-header">
                     <div className="scenario-card-title">Common words</div>
@@ -3504,6 +4479,8 @@ export default function Home() {
           scenarioDetailView
         ) : view === "topic-detail" ? (
           topicDetailView
+        ) : view === "surge" ? (
+          surgeView
         ) : (
           chatView
         )}
