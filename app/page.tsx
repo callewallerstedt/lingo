@@ -208,6 +208,7 @@ export default function Home() {
   const activeScenarioRef = useRef<ScenarioDefinition | null>(null);
   const chatModeRef = useRef<ChatMode>("scenario");
   const buddyProfileRef = useRef<BuddyProfileSnapshot | null>(null);
+  const surgeProgressRef = useRef<Record<string, SurgeProgressRecord>>({});
   const taskRef = useRef<string>("");
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef<boolean>(false);
@@ -447,6 +448,10 @@ export default function Home() {
   }, [buddyProfileSnapshot]);
 
   useEffect(() => {
+    surgeProgressRef.current = surgeProgressMap;
+  }, [surgeProgressMap]);
+
+  useEffect(() => {
     if (!language) {
       setBuddySavedState(null);
       return;
@@ -588,6 +593,7 @@ export default function Home() {
               matchTargets: Array.isArray(parsed.matchTargets) ? parsed.matchTargets : [],
               matchTranslations: Array.isArray(parsed.matchTranslations) ? parsed.matchTranslations : [],
               matchedKeys: Array.isArray(parsed.matchedKeys) ? parsed.matchedKeys : [],
+              typingHintCount: Number.isFinite(parsed.typingHintCount) ? Math.max(0, Number(parsed.typingHintCount)) : 0,
             });
           } else {
             localStorage.removeItem(SURGE_SESSION_KEY);
@@ -771,11 +777,20 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
+  function scrollMessagesToBottom(behavior: ScrollBehavior = "auto") {
+    const container = messagesRef.current;
+    if (!container) return;
+    window.requestAnimationFrame(() => {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior,
+      });
+    });
+  }
+
   useEffect(() => {
-    if (messagesRef.current) {
-      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
-    }
-  }, [messages]);
+    scrollMessagesToBottom("auto");
+  }, [messages, chatMode, view]);
 
   async function fetchProgress() {
     if (!authUser) return;
@@ -1683,6 +1698,9 @@ export default function Home() {
         messagesStateRef.current = messagesStateRef.current.map((msg) =>
           msg.id === assistantMessageId ? { ...msg, content: fullResponse } : msg
         );
+        if (chatModeRef.current === "buddy") {
+          scrollMessagesToBottom("auto");
+        }
       }
     } finally {
       reader.releaseLock();
@@ -2400,34 +2418,35 @@ export default function Home() {
 
   function syncSurgeRecord(item: SurgeItem, updater: (current: SurgeProgressRecord) => SurgeProgressRecord) {
     const now = Date.now();
-    let nextRecord: SurgeProgressRecord | null = null;
-    setSurgeProgressMap((prev) => {
-      const current = prev[item.itemKey] || {
-        itemKey: item.itemKey,
-        itemText: item.text,
-        translation: item.translation,
-        itemType: item.itemType,
-        status: "learning" as const,
-        stage: 0,
-        timesSeen: 0,
-        timesCorrect: 0,
-        lastResult: null,
-        lastDirection: null,
-        lastReviewedAt: null,
-        nextReviewAt: null,
-        createdAt: now,
-        updatedAt: now,
-      };
-      nextRecord = updater({
-        ...current,
-        itemText: item.text || current.itemText,
-        translation: item.translation || current.translation,
-        itemType: item.itemType || current.itemType,
-        updatedAt: now,
-      });
-      return nextRecord ? { ...prev, [item.itemKey]: nextRecord } : prev;
+    const currentMap = surgeProgressRef.current;
+    const current = currentMap[item.itemKey] || {
+      itemKey: item.itemKey,
+      itemText: item.text,
+      translation: item.translation,
+      itemType: item.itemType,
+      status: "learning" as const,
+      stage: 0,
+      timesSeen: 0,
+      timesCorrect: 0,
+      lastResult: null,
+      lastDirection: null,
+      lastReviewedAt: null,
+      nextReviewAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const nextRecord = updater({
+      ...current,
+      itemText: item.text || current.itemText,
+      translation: item.translation || current.translation,
+      itemType: item.itemType || current.itemType,
+      updatedAt: now,
     });
+
     if (nextRecord) {
+      const nextMap = { ...currentMap, [item.itemKey]: nextRecord };
+      surgeProgressRef.current = nextMap;
+      setSurgeProgressMap(nextMap);
       void upsertSurgeProgress([nextRecord]);
       setSurgeSavedAt(now);
     }
@@ -2450,7 +2469,7 @@ export default function Home() {
 
   function getDueSurgeItems(exclude: Set<string>) {
     const now = Date.now();
-    return Object.values(surgeProgressMap)
+    return Object.values(surgeProgressRef.current)
       .filter((record) => record.status !== "known")
       .filter((record) => Boolean(record.nextReviewAt) && (record.nextReviewAt || 0) <= now)
       .filter((record) => !exclude.has(record.itemKey))
@@ -2460,7 +2479,7 @@ export default function Home() {
 
   async function fetchSurgeBatch(session: SurgeSession, count = 10) {
     if (!language) return [];
-    const knownTexts = Object.values(surgeProgressMap)
+    const knownTexts = Object.values(surgeProgressRef.current)
       .filter((record) => record.status === "known")
       .map((record) => record.itemText);
     const existingTexts = [
@@ -2471,7 +2490,7 @@ export default function Home() {
       ...session.delayedReviewQueue.map((item) => item.item.text),
     ];
     const recentTexts = session.recentlySeen
-      .map((key) => surgeProgressMap[key]?.itemText || session.activeRound.find((item) => item.itemKey === key)?.text)
+      .map((key) => surgeProgressRef.current[key]?.itemText || session.activeRound.find((item) => item.itemKey === key)?.text)
       .filter(Boolean) as string[];
 
     const res = await fetch("/api/surge-items", {
@@ -2590,6 +2609,7 @@ export default function Home() {
       typingQueue: dedupeSurgeItems(queue),
       delayedReviewQueue: [],
       typingInput: "",
+      typingHintCount: 0,
       typingFeedback: null,
       selectedTargetKey: null,
       selectedTranslationKey: null,
@@ -2613,6 +2633,7 @@ export default function Home() {
         typingQueue: [],
         delayedReviewQueue: [],
         typingInput: "",
+        typingHintCount: 0,
         typingFeedback: null,
       },
       roundItems
@@ -2746,13 +2767,24 @@ export default function Home() {
       selectedTargetKey: surgeSession.selectedTargetKey === item.itemKey ? null : surgeSession.selectedTargetKey,
       selectedTranslationKey:
         surgeSession.selectedTranslationKey === item.itemKey ? null : surgeSession.selectedTranslationKey,
-      recentlySeen: surgeSession.recentlySeen.filter((key) => key !== item.itemKey),
+      recentlySeen: uniqueStrings([...surgeSession.recentlySeen, item.itemKey]).slice(-120),
       previewSeenKeys: surgeSession.previewSeenKeys.filter((key) => key !== item.itemKey),
     };
 
     if (nextSession.phase === "preview") {
-      nextSession = await buildNextSurgeRound(nextSession, nextSession.activeRound);
-      nextSession.previewIndex = Math.min(nextSession.previewIndex, Math.max(nextSession.activeRound.length - 1, 0));
+      const removedIndex = surgeSession.activeRound.findIndex((entry) => entry.itemKey === item.itemKey);
+      const preservedIndex =
+        removedIndex !== -1 && removedIndex < surgeSession.previewIndex
+          ? Math.max(0, surgeSession.previewIndex - 1)
+          : surgeSession.previewIndex;
+      nextSession = await fillSurgeRound(
+        {
+          ...nextSession,
+          previewRevealed: false,
+        },
+        nextSession.activeRound
+      );
+      nextSession.previewIndex = Math.min(preservedIndex, Math.max(nextSession.activeRound.length - 1, 0));
       nextSession.previewRevealed = false;
     } else if (nextSession.phase === "typing") {
       if (!nextSession.typingQueue.length) {
@@ -2776,8 +2808,36 @@ export default function Home() {
   }
 
   function getSurgeDirection(item: SurgeItem) {
-    const stage = surgeProgressMap[item.itemKey]?.stage ?? 0;
+    const stage = surgeProgressRef.current[item.itemKey]?.stage ?? 0;
     return getDirectionForStage(stage);
+  }
+
+  function getSurgeExpectedAnswer(item: SurgeItem) {
+    return getSurgeDirection(item) === "target_to_english" ? item.translation : item.text;
+  }
+
+  function buildSurgeHintMask(answer: string, revealCount: number) {
+    if (!revealCount) return "";
+    let revealed = 0;
+    return Array.from(answer).map((char) => {
+      if (!/[\p{L}\p{N}]/u.test(char)) {
+        return char;
+      }
+      revealed += 1;
+      return revealed <= revealCount ? char : "·";
+    }).join("");
+  }
+
+  function revealSurgeTypingHint() {
+    if (!surgeSession || surgeSession.phase !== "typing" || surgeSession.typingFeedback) return;
+    const current = surgeSession.typingQueue[0];
+    if (!current) return;
+    const answer = getSurgeExpectedAnswer(current);
+    const revealableCount = Array.from(answer).filter((char) => /[\p{L}\p{N}]/u.test(char)).length;
+    setSurgeSession({
+      ...surgeSession,
+      typingHintCount: Math.min(surgeSession.typingHintCount + 1, revealableCount),
+    });
   }
 
   function releaseDelayedReviews(session: SurgeSession) {
@@ -2808,6 +2868,7 @@ export default function Home() {
       ...surgeSession,
       typingQueue: surgeSession.typingQueue.slice(1),
       typingInput: "",
+      typingHintCount: 0,
       typingFeedback: null,
     };
     nextSession = releaseDelayedReviews(nextSession);
@@ -2821,6 +2882,7 @@ export default function Home() {
         ...nextSession,
         typingQueue: delayedItems,
         delayedReviewQueue: [],
+        typingHintCount: 0,
       });
       return;
     }
@@ -2832,7 +2894,7 @@ export default function Home() {
     if (!surgeSession) return;
     const current = surgeSession.typingQueue[0];
     if (!current || surgeSession.typingFeedback) return;
-    const currentRecord = surgeProgressMap[current.itemKey];
+    const currentRecord = surgeProgressRef.current[current.itemKey];
     const direction = getDirectionForStage(currentRecord?.stage ?? 0);
     const mode = direction === "target_to_english" ? "english" : "target";
     const submitted = normalizeSurgeAnswer(surgeSession.typingInput, mode);
@@ -2931,8 +2993,8 @@ export default function Home() {
       const start = context.currentTime;
       const master = context.createGain();
       master.gain.setValueAtTime(0.0001, start);
-      master.gain.exponentialRampToValueAtTime(0.26, start + 0.002);
-      master.gain.exponentialRampToValueAtTime(0.0001, start + 0.07);
+      master.gain.exponentialRampToValueAtTime(0.38, start + 0.002);
+      master.gain.exponentialRampToValueAtTime(0.0001, start + 0.08);
       master.connect(context.destination);
 
       const noiseBuffer = context.createBuffer(1, Math.floor(context.sampleRate * 0.04), context.sampleRate);
@@ -2949,8 +3011,8 @@ export default function Home() {
       noiseFilter.Q.value = 0.7;
       const noiseGain = context.createGain();
       noiseGain.gain.setValueAtTime(0.0001, start);
-      noiseGain.gain.exponentialRampToValueAtTime(0.65, start + 0.0015);
-      noiseGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.035);
+      noiseGain.gain.exponentialRampToValueAtTime(0.9, start + 0.0015);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.038);
       noise.connect(noiseFilter);
       noiseFilter.connect(noiseGain);
       noiseGain.connect(master);
@@ -2963,12 +3025,25 @@ export default function Home() {
       body.frequency.exponentialRampToValueAtTime(74, start + 0.05);
       const bodyGain = context.createGain();
       bodyGain.gain.setValueAtTime(0.0001, start);
-      bodyGain.gain.exponentialRampToValueAtTime(0.18, start + 0.002);
-      bodyGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.05);
+      bodyGain.gain.exponentialRampToValueAtTime(0.24, start + 0.002);
+      bodyGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.055);
       body.connect(bodyGain);
       bodyGain.connect(master);
       body.start(start);
       body.stop(start + 0.055);
+
+      const click = context.createOscillator();
+      click.type = "triangle";
+      click.frequency.setValueAtTime(920, start);
+      click.frequency.exponentialRampToValueAtTime(520, start + 0.02);
+      const clickGain = context.createGain();
+      clickGain.gain.setValueAtTime(0.0001, start);
+      clickGain.gain.exponentialRampToValueAtTime(0.08, start + 0.001);
+      clickGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.018);
+      click.connect(clickGain);
+      clickGain.connect(master);
+      click.start(start);
+      click.stop(start + 0.02);
     };
 
     if (context.state === "suspended") {
@@ -3839,6 +3914,11 @@ export default function Home() {
               disabled={Boolean(surgeSession.typingFeedback)}
             />
           </div>
+          {surgeSession.typingHintCount > 0 && !surgeSession.typingFeedback ? (
+            <div className="surge-hint">
+              Hint: {buildSurgeHintMask(getSurgeExpectedAnswer(currentSurgePrompt), surgeSession.typingHintCount)}
+            </div>
+          ) : null}
           {surgeSession.typingFeedback ? (
             <div className={`surge-feedback ${surgeSession.typingFeedback.status}`}>
               {surgeSession.typingFeedback.status === "correct" ? "Correct" : "Not quite"}
@@ -3860,6 +3940,15 @@ export default function Home() {
             >
               I know this...
             </button>
+            {!surgeSession.typingFeedback ? (
+              <button
+                type="button"
+                className="ghost"
+                onClick={revealSurgeTypingHint}
+              >
+                Hint
+              </button>
+            ) : null}
             <button
               type="button"
               className="solid"
