@@ -196,6 +196,7 @@ export default function Home() {
   const [surgeLoading, setSurgeLoading] = useState<boolean>(false);
   const [surgeError, setSurgeError] = useState<string | null>(null);
   const [surgeSavedAt, setSurgeSavedAt] = useState<number>(0);
+  const [surgeHydrated, setSurgeHydrated] = useState<boolean>(false);
 
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -517,23 +518,26 @@ export default function Home() {
   }, [topicVocabMap]);
 
   useEffect(() => {
+    if (authLoading || !surgeHydrated) {
+      return;
+    }
     if (!language) {
       return;
     }
     if (!surgeSession || surgeSession.language !== language) {
-      localStorage.removeItem(SURGE_SESSION_KEY);
       return;
     }
     localStorage.setItem(SURGE_SESSION_KEY, JSON.stringify(surgeSession));
-  }, [language, surgeSession]);
+  }, [authLoading, language, surgeHydrated, surgeSession]);
 
   useEffect(() => {
+    if (authLoading || !surgeHydrated) return;
     if (!language) return;
     localStorage.setItem(
       `${SURGE_PROGRESS_KEY_PREFIX}${language}`,
       JSON.stringify(surgeProgressMap)
     );
-  }, [language, surgeProgressMap]);
+  }, [authLoading, language, surgeHydrated, surgeProgressMap]);
 
 
   useEffect(() => {
@@ -554,7 +558,8 @@ export default function Home() {
   }, [authUser, language, languageOptions]);
 
   useEffect(() => {
-    if (!language) return;
+    setSurgeHydrated(false);
+    if (authLoading || !language) return;
     const savedSurgeProgress = localStorage.getItem(`${SURGE_PROGRESS_KEY_PREFIX}${language}`);
     if (savedSurgeProgress) {
       try {
@@ -604,6 +609,7 @@ export default function Home() {
           setSurgeSession(null);
         }
       }
+      setSurgeHydrated(true);
       return;
     }
     const savedStudy = localStorage.getItem("lingoarc_study_pack");
@@ -669,9 +675,8 @@ export default function Home() {
     } catch {
       setTopicVocabMap({});
     }
-    setSurgeProgressMap({});
-    setSurgeSession(null);
-  }, [authUser, language]);
+    setSurgeHydrated(true);
+  }, [authLoading, authUser, language]);
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -723,7 +728,9 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (authLoading) return;
     if (!authUser) {
+      setSurgeHydrated(false);
       setProgressMap({});
       setView("dashboard");
       setActiveScenario(null);
@@ -744,7 +751,7 @@ export default function Home() {
     setAuthError(null);
     void fetchProgress();
     void loadProfile();
-  }, [authUser]);
+  }, [authLoading, authUser]);
 
   useEffect(() => {
     const handler = (event: MouseEvent) => {
