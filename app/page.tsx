@@ -173,6 +173,7 @@ export default function Home() {
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const surgeInputRef = useRef<HTMLInputElement | null>(null);
+  const surgeTypingPanelRef = useRef<HTMLDivElement | null>(null);
   const activeTargetRef = useRef<HTMLElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const ignoreWindowClickRef = useRef<boolean>(false);
@@ -185,6 +186,7 @@ export default function Home() {
   const archiveTriggeredRef = useRef<boolean>(false);
   const speechCacheRef = useRef<Map<string, string>>(new Map());
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const uiAudioContextRef = useRef<AudioContext | null>(null);
 
   const clientCache = useMemo(() => new Map<string, string>(), []);
 
@@ -2555,6 +2557,82 @@ export default function Home() {
     });
   }
 
+  function handleSurgeTypingShortcut(event: React.KeyboardEvent<HTMLElement | HTMLInputElement>) {
+    if (!surgeSession || surgeSession.phase !== "typing") return;
+    const isInputTarget =
+      event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLTextAreaElement ||
+      (event.target instanceof HTMLElement && event.target.isContentEditable);
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (surgeSession.typingFeedback) {
+        void completeSurgeTypedStep();
+      } else {
+        void submitSurgeTypedAnswer();
+      }
+      return;
+    }
+
+    if (event.key === " " && (surgeSession.typingFeedback || !isInputTarget)) {
+      event.preventDefault();
+      if (surgeSession.typingFeedback) {
+        void completeSurgeTypedStep();
+      } else {
+        void submitSurgeTypedAnswer();
+      }
+    }
+  }
+
+  function playUiClickThock() {
+    const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextCtor) return;
+
+    const context = uiAudioContextRef.current ?? new AudioContextCtor();
+    uiAudioContextRef.current = context;
+
+    if (context.state === "suspended") {
+      void context.resume();
+    }
+
+    const start = context.currentTime;
+    const master = context.createGain();
+    master.gain.setValueAtTime(0.0001, start);
+    master.gain.exponentialRampToValueAtTime(0.2, start + 0.008);
+    master.gain.exponentialRampToValueAtTime(0.0001, start + 0.11);
+    master.connect(context.destination);
+
+    const low = context.createOscillator();
+    low.type = "triangle";
+    low.frequency.setValueAtTime(132, start);
+    low.frequency.exponentialRampToValueAtTime(88, start + 0.09);
+    low.connect(master);
+    low.start(start);
+    low.stop(start + 0.12);
+
+    const click = context.createOscillator();
+    click.type = "square";
+    click.frequency.setValueAtTime(220, start);
+    click.frequency.exponentialRampToValueAtTime(140, start + 0.03);
+    const clickGain = context.createGain();
+    clickGain.gain.setValueAtTime(0.0001, start);
+    clickGain.gain.exponentialRampToValueAtTime(0.1, start + 0.004);
+    clickGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.04);
+    click.connect(clickGain);
+    clickGain.connect(master);
+    click.start(start);
+    click.stop(start + 0.045);
+  }
+
+  function handleAppPointerDownCapture(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const button = target.closest("button");
+    if (!button || button.hasAttribute("disabled") || button.getAttribute("aria-disabled") === "true") return;
+    playUiClickThock();
+  }
+
   async function completeSurgeMatchRound() {
     if (!surgeSession) return;
     const nextReviewQueue = dedupeSurgeItems([...surgeSession.reviewQueue, ...surgeSession.activeRound]).filter(
@@ -3040,6 +3118,10 @@ export default function Home() {
   useEffect(() => {
     if (surgeSession?.phase === "typing" && !surgeSession.typingFeedback) {
       surgeInputRef.current?.focus();
+      surgeTypingPanelRef.current?.blur();
+    }
+    if (surgeSession?.phase === "typing" && surgeSession.typingFeedback) {
+      surgeTypingPanelRef.current?.focus();
     }
   }, [surgeSession]);
 
@@ -3282,7 +3364,12 @@ export default function Home() {
           </div>
         </div>
       ) : surgeSession.phase === "typing" && currentSurgePrompt ? (
-        <div className="surge-panel surge-typing">
+        <div
+          ref={surgeTypingPanelRef}
+          className="surge-panel surge-typing"
+          tabIndex={-1}
+          onKeyDown={handleSurgeTypingShortcut}
+        >
           <div className="surge-progress">
             <span>{getSurgeDirection(currentSurgePrompt) === "target_to_english" ? "Type English" : `Type ${targetLabel}`}</span>
             <span>{surgeSession.typingQueue.length} left</span>
@@ -3318,14 +3405,7 @@ export default function Home() {
                 )
               }
               onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  if (surgeSession.typingFeedback) {
-                    void completeSurgeTypedStep();
-                  } else {
-                    void submitSurgeTypedAnswer();
-                  }
-                }
+                handleSurgeTypingShortcut(event);
               }}
               placeholder={
                 getSurgeDirection(currentSurgePrompt) === "target_to_english"
@@ -4275,7 +4355,7 @@ export default function Home() {
   );
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" onPointerDownCapture={handleAppPointerDownCapture}>
       <header className="top-bar">
         <div className="brand">
           <button type="button" className="brand-button" onClick={() => setView("dashboard")}>
