@@ -16,7 +16,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
-  const { language, count, existing, known, recent, difficulty } = body || {};
+  const { language, count, existing, known, recent, support, difficulty } = body || {};
 
   if (!language || typeof count !== "number") {
     res.status(400).json({ error: "Missing language or count" });
@@ -27,6 +27,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const existingList = Array.isArray(existing) ? existing.slice(-80) : [];
   const knownList = Array.isArray(known) ? known.slice(-120) : [];
   const recentList = Array.isArray(recent) ? recent.slice(-80) : [];
+  const supportList = Array.isArray(support) ? support.slice(-120) : [];
 
   const prompt = [
     {
@@ -38,11 +39,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             "Generate the most important beginner language items for fast recall practice.",
             `Return exactly ${safeCount} items as JSON.`,
             "Most items must be single high-frequency words.",
-            "Include a smaller number of ultra-common short phrases used in daily speech.",
+            supportList.length >= 8
+              ? "Include one or two ultra-common short phrases or tiny sentences used in daily speech."
+              : "Keep phrases very rare unless they are unavoidable ultra-basic expressions.",
             "Every item must have text, translation, and itemType.",
             "itemType must be either word or phrase.",
-            "translation must be concise natural English.",
+            "translation must be concise natural English only.",
             "Choose items that appear in everyday conversation and early sentence building.",
+            "Never return a translation in the target language.",
+            "Never return text and translation that mean the same written form.",
+            supportList.length >= 8
+              ? "If you include a phrase or tiny sentence, build it only from words in the support vocabulary list or universally basic function words."
+              : "If support vocabulary is small, prefer standalone words over phrases.",
             difficulty === "hard"
               ? "You may include slightly broader daily-life items, but keep them essential."
               : "Keep the set extremely basic and practical.",
@@ -63,6 +71,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             existingList.length ? `Existing items:\n${existingList.map((item: string) => `- ${item}`).join("\n")}` : "Existing items: none",
             knownList.length ? `Known items:\n${knownList.map((item: string) => `- ${item}`).join("\n")}` : "Known items: none",
             recentList.length ? `Recent items:\n${recentList.map((item: string) => `- ${item}`).join("\n")}` : "Recent items: none",
+            supportList.length ? `Support vocabulary for phrases:\n${supportList.map((item: string) => `- ${item}`).join("\n")}` : "Support vocabulary for phrases: none",
           ].join("\n\n"),
         },
       ],
@@ -155,7 +164,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             : "word";
       const itemType = inferredType;
       const itemKey = normalizeSurgeKey(text);
+      const normalizedTranslation = normalizeSurgeKey(translation);
       if (!text || !translation || !itemKey || seen.has(itemKey)) continue;
+      if (normalizedTranslation === itemKey) continue;
       seen.add(itemKey);
       cleaned.push({ text, translation, itemType, itemKey });
       if (cleaned.length >= safeCount) break;

@@ -58,6 +58,7 @@ export type SurgeSession = {
   selectedTargetKey: string | null;
   selectedTranslationKey: string | null;
   typingInput: string;
+  typingDirection: SurgeDirection | null;
   typingHintCount: number;
   typingFeedback: SurgeTypingFeedback | null;
 };
@@ -85,6 +86,7 @@ export function createEmptySurgeSession(language: string): SurgeSession {
     selectedTargetKey: null,
     selectedTranslationKey: null,
     typingInput: "",
+    typingDirection: null,
     typingHintCount: 0,
     typingFeedback: null,
   };

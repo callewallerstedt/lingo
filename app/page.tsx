@@ -1213,6 +1213,12 @@ export default function Home() {
             ? parsed.selectedTranslationKey
             : null,
         typingInput: typeof parsed.typingInput === "string" ? parsed.typingInput : "",
+        typingDirection:
+          parsed.typingDirection === "english_to_target" || parsed.typingDirection === "target_to_english"
+            ? parsed.typingDirection
+            : typingQueue[0]
+              ? getDirectionForStage(progressByKey[typingQueue[0].itemKey]?.stage ?? 0)
+              : null,
         typingHintCount: Number.isFinite(parsed.typingHintCount) ? Math.max(0, Number(parsed.typingHintCount)) : 0,
         typingFeedback:
           parsed.typingFeedback &&
@@ -2796,7 +2802,23 @@ export default function Home() {
     const knownTexts = Object.values(surgeProgressRef.current)
       .filter((record) => record.status === "known")
       .map((record) => record.itemText);
+    const trackedTexts = Object.values(surgeProgressRef.current)
+      .map((record) => record.itemText)
+      .filter(Boolean);
+    const supportTexts = uniqueStrings([
+      ...Object.values(surgeProgressRef.current)
+        .filter((record) => record.status === "known" || record.stage >= 1)
+        .map((record) => record.itemText),
+      ...(studyPack?.entries.filter((entry) => !entry.archived).map((entry) => entry.word) ?? []),
+      ...Object.values(scenarioVocabMap).flatMap((pack) =>
+        pack.entries.filter((entry) => !entry.archived).map((entry) => entry.word)
+      ),
+      ...Object.values(topicVocabMap).flatMap((pack) =>
+        pack.entries.filter((entry) => !entry.archived).map((entry) => entry.word)
+      ),
+    ]).slice(-120);
     const existingTexts = [
+      ...trackedTexts,
       ...session.activeRound.map((item) => item.text),
       ...session.reserve.map((item) => item.text),
       ...session.reviewQueue.map((item) => item.text),
@@ -2816,6 +2838,7 @@ export default function Home() {
         existing: uniqueStrings(existingTexts),
         known: uniqueStrings(knownTexts),
         recent: uniqueStrings(recentTexts),
+        support: supportTexts,
         difficulty,
       }),
     });
@@ -2917,12 +2940,14 @@ export default function Home() {
   }
 
   function createTypingSession(session: SurgeSession, queue: SurgeItem[]) {
+    const dedupedQueue = dedupeSurgeItems(queue);
     return {
       ...session,
       phase: "typing" as const,
-      typingQueue: dedupeSurgeItems(queue),
+      typingQueue: dedupedQueue,
       delayedReviewQueue: [],
       typingInput: "",
+      typingDirection: dedupedQueue[0] ? getSurgeDirection(dedupedQueue[0]) : null,
       typingHintCount: 0,
       typingFeedback: null,
       selectedTargetKey: null,
@@ -2947,6 +2972,7 @@ export default function Home() {
         typingQueue: [],
         delayedReviewQueue: [],
         typingInput: "",
+        typingDirection: null,
         typingHintCount: 0,
         typingFeedback: null,
       },
@@ -3005,11 +3031,14 @@ export default function Home() {
   }
 
   function noteSurgeExposure(item: SurgeItem) {
+    const now = Date.now();
     syncSurgeRecord(item, (current) => ({
       ...current,
       status: current.status,
       timesSeen: current.timesSeen + 1,
-      updatedAt: Date.now(),
+      lastReviewedAt: current.lastReviewedAt ?? now,
+      nextReviewAt: current.nextReviewAt ?? now + 10 * 60 * 1000,
+      updatedAt: now,
     }));
   }
 
@@ -3129,14 +3158,17 @@ export default function Home() {
 
     if (nextSession.phase === "typing") {
       if (!nextSession.typingQueue.length && nextSession.delayedReviewQueue.length) {
+        const nextTypingQueue = nextSession.delayedReviewQueue.map((entry) => entry.item);
         nextSession = {
           ...nextSession,
-          typingQueue: nextSession.delayedReviewQueue.map((entry) => entry.item),
+          typingQueue: nextTypingQueue,
           delayedReviewQueue: [],
+          typingDirection: nextTypingQueue[0] ? getSurgeDirection(nextTypingQueue[0]) : null,
         };
         setSurgeSession(nextSession);
         return;
       }
+      nextSession.typingDirection = nextSession.typingQueue[0] ? getSurgeDirection(nextSession.typingQueue[0]) : null;
       setSurgeSession(nextSession);
       if (!nextSession.typingQueue.length) {
         const rebuilt = await buildNextSurgeRound(nextSession);
@@ -3153,8 +3185,9 @@ export default function Home() {
     return getDirectionForStage(stage);
   }
 
-  function getSurgeExpectedAnswer(item: SurgeItem) {
-    return getSurgeDirection(item) === "target_to_english" ? item.translation : item.text;
+  function getSurgeExpectedAnswer(item: SurgeItem, directionOverride?: SurgeDirection | null) {
+    const direction = directionOverride || getSurgeDirection(item);
+    return direction === "target_to_english" ? item.translation : item.text;
   }
 
   function buildSurgeHintMask(answer: string, revealCount: number) {
@@ -3173,7 +3206,7 @@ export default function Home() {
     if (!surgeSession || surgeSession.phase !== "typing" || surgeSession.typingFeedback) return;
     const current = surgeSession.typingQueue[0];
     if (!current) return;
-    const answer = getSurgeExpectedAnswer(current);
+    const answer = getSurgeExpectedAnswer(current, surgeSession.typingDirection);
     const revealableCount = Array.from(answer).filter((char) => /[\p{L}\p{N}]/u.test(char)).length;
     setSurgeSession({
       ...surgeSession,
@@ -3209,6 +3242,7 @@ export default function Home() {
       ...surgeSession,
       typingQueue: surgeSession.typingQueue.slice(1),
       typingInput: "",
+      typingDirection: surgeSession.typingQueue[1] ? getSurgeDirection(surgeSession.typingQueue[1]) : null,
       typingHintCount: 0,
       typingFeedback: null,
     };
@@ -3223,6 +3257,7 @@ export default function Home() {
         ...nextSession,
         typingQueue: delayedItems,
         delayedReviewQueue: [],
+        typingDirection: delayedItems[0] ? getSurgeDirection(delayedItems[0]) : null,
         typingHintCount: 0,
       });
       return;
@@ -3236,7 +3271,7 @@ export default function Home() {
     const current = surgeSession.typingQueue[0];
     if (!current || surgeSession.typingFeedback) return;
     const currentRecord = surgeProgressRef.current[current.itemKey];
-    const direction = getDirectionForStage(currentRecord?.stage ?? 0);
+    const direction = surgeSession.typingDirection || getDirectionForStage(currentRecord?.stage ?? 0);
     const mode = direction === "target_to_english" ? "english" : "target";
     const submitted = normalizeSurgeAnswer(surgeSession.typingInput, mode);
     const expected = normalizeSurgeAnswer(
@@ -4092,6 +4127,12 @@ export default function Home() {
   }, [buddyProfileSnapshot, language]);
   const dashboardTopicPreview = useMemo(() => topicList.slice(0, 3), [topicList]);
   const currentSurgePrompt = useMemo(() => getCurrentSurgePrompt(surgeSession), [surgeSession]);
+  const currentSurgeTypingDirection = useMemo(() => {
+    if (!surgeSession || surgeSession.phase !== "typing" || !currentSurgePrompt) {
+      return null;
+    }
+    return surgeSession.typingFeedback?.direction || surgeSession.typingDirection || getSurgeDirection(currentSurgePrompt);
+  }, [currentSurgePrompt, surgeSession]);
   const studyVisibleItems = useMemo(() => {
     const entries = studyPack?.entries ?? [];
     return entries
@@ -4267,20 +4308,20 @@ export default function Home() {
           onKeyDown={handleSurgeTypingShortcut}
         >
           <div className="surge-progress">
-            <span>{getSurgeDirection(currentSurgePrompt) === "target_to_english" ? "Type English" : `Type ${targetLabel}`}</span>
+            <span>{currentSurgeTypingDirection === "target_to_english" ? "Type English" : `Type ${targetLabel}`}</span>
             <span>{surgeSession.typingQueue.length} left</span>
           </div>
           <div className="surge-prompt-card">
             <div className="surge-card-label">
-              {getSurgeDirection(currentSurgePrompt) === "target_to_english" ? targetLabel : "English"}
+              {currentSurgeTypingDirection === "target_to_english" ? targetLabel : "English"}
             </div>
             <div className="surge-prompt-text">
-              {getSurgeDirection(currentSurgePrompt) === "target_to_english"
+              {currentSurgeTypingDirection === "target_to_english"
                 ? currentSurgePrompt.text
                 : currentSurgePrompt.translation}
             </div>
             <div className="surge-prompt-sub">
-              {getSurgeDirection(currentSurgePrompt) === "target_to_english"
+              {currentSurgeTypingDirection === "target_to_english"
                 ? "Type the English meaning."
                 : `Type the answer in ${targetLabel}.`}
             </div>
@@ -4304,7 +4345,7 @@ export default function Home() {
                 handleSurgeTypingShortcut(event);
               }}
               placeholder={
-                getSurgeDirection(currentSurgePrompt) === "target_to_english"
+                currentSurgeTypingDirection === "target_to_english"
                   ? "Type the English meaning"
                   : `Type in ${targetLabel}`
               }
@@ -4313,7 +4354,7 @@ export default function Home() {
           </div>
           {surgeSession.typingHintCount > 0 && !surgeSession.typingFeedback ? (
             <div className="surge-hint">
-              Hint: {buildSurgeHintMask(getSurgeExpectedAnswer(currentSurgePrompt), surgeSession.typingHintCount)}
+              Hint: {buildSurgeHintMask(getSurgeExpectedAnswer(currentSurgePrompt, currentSurgeTypingDirection), surgeSession.typingHintCount)}
             </div>
           ) : null}
           {surgeSession.typingFeedback ? (
