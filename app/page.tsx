@@ -306,6 +306,13 @@ export default function Home() {
     startLeft: number;
     startTop: number;
   } | null>(null);
+  const quickChatResizeRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startWidth: number;
+    startHeight: number;
+  } | null>(null);
 
   const clientCache = useMemo(() => new Map<string, string>(), []);
 
@@ -1170,52 +1177,37 @@ export default function Home() {
   }, [quickChatLarge]);
 
   useEffect(() => {
-    if (!quickChatOpen || typeof ResizeObserver === "undefined") return;
-    const panel = quickChatPanelRef.current;
-    if (!panel) return;
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      setQuickChatLayout((current) => {
-        const nextBase = current || getQuickChatPresetLayout(quickChatLarge);
-        const next = clampQuickChatLayout({
-          ...nextBase,
-          width: entry.contentRect.width,
-          height: entry.contentRect.height,
-        });
-        if (
-          current &&
-          current.width === next.width &&
-          current.height === next.height &&
-          current.left === next.left &&
-          current.top === next.top
-        ) {
-          return current;
-        }
-        return next;
-      });
-    });
-    observer.observe(panel);
-    return () => observer.disconnect();
-  }, [quickChatLarge, quickChatOpen]);
-
-  useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
       const drag = quickChatDragRef.current;
-      if (!drag) return;
-      setQuickChatLayout((current) =>
-        clampQuickChatLayout({
-          ...(current || getQuickChatPresetLayout(quickChatLarge)),
-          left: drag.startLeft + (event.clientX - drag.startX),
-          top: drag.startTop + (event.clientY - drag.startY),
-        })
-      );
+      const resize = quickChatResizeRef.current;
+      if (drag) {
+        setQuickChatLayout((current) =>
+          clampQuickChatLayout({
+            ...(current || getQuickChatPresetLayout(quickChatLarge)),
+            left: drag.startLeft + (event.clientX - drag.startX),
+            top: drag.startTop + (event.clientY - drag.startY),
+          })
+        );
+      } else if (resize) {
+        setQuickChatLayout((current) =>
+          clampQuickChatLayout({
+            ...(current || getQuickChatPresetLayout(quickChatLarge)),
+            width: resize.startWidth + (event.clientX - resize.startX),
+            height: resize.startHeight + (event.clientY - resize.startY),
+          })
+        );
+      }
     };
 
     const handlePointerUp = (event: PointerEvent) => {
       const drag = quickChatDragRef.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      quickChatDragRef.current = null;
+      if (drag && drag.pointerId === event.pointerId) {
+        quickChatDragRef.current = null;
+      }
+      const resize = quickChatResizeRef.current;
+      if (resize && resize.pointerId === event.pointerId) {
+        quickChatResizeRef.current = null;
+      }
     };
 
     window.addEventListener("pointermove", handlePointerMove);
@@ -3286,7 +3278,7 @@ export default function Home() {
 
   function startQuickChatDrag(event: React.PointerEvent<HTMLElement>) {
     const target = event.target as HTMLElement | null;
-    if (!target || target.closest("button, textarea, input, a, code")) {
+    if (!target || target.closest("button, textarea, input, a, code, .quick-chat-resize-handle")) {
       return;
     }
     const base = quickChatLayout || getQuickChatPresetLayout(quickChatLarge);
@@ -3296,6 +3288,19 @@ export default function Home() {
       startY: event.clientY,
       startLeft: base.left,
       startTop: base.top,
+    };
+  }
+
+  function startQuickChatResize(event: React.PointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const base = quickChatLayout || getQuickChatPresetLayout(quickChatLarge);
+    quickChatResizeRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: base.width,
+      startHeight: base.height,
     };
   }
 
@@ -7201,7 +7206,7 @@ export default function Home() {
     </section>
   );
 
-  const quickChatShellStyle = quickChatLayout
+  const quickChatShellStyle = quickChatOpen && quickChatLayout
     ? {
         left: quickChatLayout.left,
         top: quickChatLayout.top,
@@ -7229,7 +7234,6 @@ export default function Home() {
           style={quickChatPanelStyle}
         >
           <div className="quick-chat-panel-actions" onPointerDown={startQuickChatDrag}>
-            <div className="quick-chat-drag-handle" aria-hidden="true" />
             <button
               type="button"
               className="ghost quick-chat-header-btn"
@@ -7323,6 +7327,12 @@ export default function Home() {
               </button>
             </div>
           </div>
+          <button
+            type="button"
+            className="quick-chat-resize-handle"
+            onPointerDown={startQuickChatResize}
+            aria-label="Resize chat"
+          />
         </section>
       ) : (
         <button
