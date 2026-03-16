@@ -31,6 +31,7 @@ import {
 
 const TASKS_PER_SCENARIO = 10;
 const BUDDY_STATE_KEY_PREFIX = "lingoarc_buddy_state_";
+const QUICK_CHAT_STATE_KEY_PREFIX = "lingoarc_quick_chat_";
 
 type Role = "user" | "assistant";
 
@@ -82,7 +83,7 @@ type SuggestionPayload = {
   suggestion: string;
 };
 
-type VocabScope = "chat" | "common" | "sentence" | "scenario" | "topic" | "surge" | "example";
+type VocabScope = "chat" | "common" | "sentence" | "scenario" | "topic" | "surge" | "example" | "quick";
 type ExampleScope = "chat" | "common" | "scenario" | "topic";
 type ThemeMode = "dark" | "light";
 type ChatMode = "scenario" | "buddy";
@@ -110,6 +111,26 @@ type BuddyProfileSnapshot = {
 type BuddySavedState = {
   messages: Message[];
   savedAt: number;
+};
+
+type QuickChatMode = "translation" | "correction" | "answer" | "tts";
+type QuickAssistantPayload = {
+  mode: QuickChatMode;
+  title: string;
+  text: string;
+  targetText?: string;
+  translation?: string;
+  verdict?: "ok" | "fix" | "note" | null;
+  improved?: string;
+  note?: string;
+  ttsText?: string;
+};
+
+type QuickChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text?: string;
+  payload?: QuickAssistantPayload;
 };
 
 type ScenarioGroupId = "foundation" | "travel" | "life";
@@ -227,6 +248,13 @@ export default function Home() {
   const [surgeHydrated, setSurgeHydrated] = useState<boolean>(false);
   const [showSurgeMastered, setShowSurgeMastered] = useState<boolean>(false);
   const [surgeModes, setSurgeModes] = useState<SurgeModePreferences>(DEFAULT_SURGE_MODE_PREFERENCES);
+  const [quickChatOpen, setQuickChatOpen] = useState<boolean>(false);
+  const [quickChatLarge, setQuickChatLarge] = useState<boolean>(false);
+  const [quickChatInput, setQuickChatInput] = useState<string>("");
+  const [quickChatMessages, setQuickChatMessages] = useState<QuickChatMessage[]>([]);
+  const [quickChatLoading, setQuickChatLoading] = useState<boolean>(false);
+  const [quickChatRecording, setQuickChatRecording] = useState<boolean>(false);
+  const [quickChatVoiceReady, setQuickChatVoiceReady] = useState<boolean>(false);
 
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -256,6 +284,9 @@ export default function Home() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const speechPlaybackTokenRef = useRef<number>(0);
   const uiAudioContextRef = useRef<AudioContext | null>(null);
+  const quickChatMessagesRef = useRef<HTMLDivElement | null>(null);
+  const quickChatRecorderRef = useRef<MediaRecorder | null>(null);
+  const quickChatChunksRef = useRef<Blob[]>([]);
 
   const clientCache = useMemo(() => new Map<string, string>(), []);
 
@@ -671,6 +702,46 @@ export default function Home() {
   }, [language]);
 
   useEffect(() => {
+    setQuickChatVoiceReady(
+      typeof window !== "undefined" &&
+        typeof navigator !== "undefined" &&
+        Boolean(navigator.mediaDevices?.getUserMedia) &&
+        typeof MediaRecorder !== "undefined"
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!language) {
+      setQuickChatMessages([]);
+      return;
+    }
+    const raw = localStorage.getItem(`${QUICK_CHAT_STATE_KEY_PREFIX}${language}`);
+    if (!raw) {
+      setQuickChatMessages([]);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw) as QuickChatMessage[];
+      const restored = Array.isArray(parsed)
+        ? parsed.filter(
+            (item): item is QuickChatMessage =>
+              item &&
+              typeof item.id === "string" &&
+              (item.role === "user" || item.role === "assistant")
+          )
+        : [];
+      setQuickChatMessages(restored);
+    } catch {
+      setQuickChatMessages([]);
+    }
+  }, [language]);
+
+  useEffect(() => {
+    if (!language) return;
+    localStorage.setItem(`${QUICK_CHAT_STATE_KEY_PREFIX}${language}`, JSON.stringify(quickChatMessages));
+  }, [language, quickChatMessages]);
+
+  useEffect(() => {
     if (!language) return;
     if (chatMode !== "buddy" || messages.length === 0) {
       return;
@@ -1016,6 +1087,17 @@ export default function Home() {
   useEffect(() => {
     scrollMessagesToBottom("auto");
   }, [messages, chatMode, view]);
+
+  useEffect(() => {
+    const container = quickChatMessagesRef.current;
+    if (!container) return;
+    window.requestAnimationFrame(() => {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: "auto",
+      });
+    });
+  }, [quickChatMessages, quickChatOpen]);
 
   async function fetchProgress() {
     if (!authUser) return;
@@ -3153,6 +3235,182 @@ export default function Home() {
     } finally {
       setSpeechLoadingKey((current) => (current === key ? null : current));
     }
+  }
+
+  function quickMessageToHistoryText(message: QuickChatMessage) {
+    if (message.role === "user") {
+      return message.text || "";
+    }
+    const payload = message.payload;
+    if (!payload) {
+      return "";
+    }
+    return [
+      payload.title,
+      payload.text,
+      payload.targetText,
+      payload.translation,
+      payload.improved,
+      payload.note,
+      payload.ttsText,
+    ]
+      .filter(Boolean)
+      .join(" | ");
+  }
+
+  async function sendQuickChatMessage(rawText: string, options?: { force?: boolean }) {
+    const trimmed = rawText.trim();
+    if (!trimmed || !language || (quickChatLoading && !options?.force)) return;
+
+    const userMessage: QuickChatMessage = {
+      id: makeId(),
+      role: "user",
+      text: trimmed,
+    };
+    const nextMessages = [...quickChatMessages, userMessage];
+    setQuickChatMessages(nextMessages);
+    setQuickChatInput("");
+    setQuickChatOpen(true);
+    setQuickChatLoading(true);
+
+    try {
+      const res = await fetch("/api/quick-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          language,
+          message: trimmed,
+          profileSummary: buddyProfileSnapshot.summary,
+          history: nextMessages.slice(-12).map((item) => ({
+            role: item.role,
+            text: quickMessageToHistoryText(item),
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Quick chat failed");
+      }
+
+      const data = (await res.json()) as QuickAssistantPayload;
+      setQuickChatMessages((current) => [
+        ...current,
+        {
+          id: makeId(),
+          role: "assistant",
+          payload: {
+            mode: data.mode || "answer",
+            title: data.title || "Quick help",
+            text: data.text || "",
+            targetText: data.targetText || "",
+            translation: data.translation || "",
+            verdict: data.verdict || null,
+            improved: data.improved || "",
+            note: data.note || "",
+            ttsText: data.ttsText || "",
+          },
+        },
+      ]);
+    } catch {
+      setQuickChatMessages((current) => [
+        ...current,
+        {
+          id: makeId(),
+          role: "assistant",
+          payload: {
+            mode: "answer",
+            title: "Quick help",
+            text: "That did not go through. Try again.",
+          },
+        },
+      ]);
+    } finally {
+      setQuickChatLoading(false);
+    }
+  }
+
+  async function transcribeQuickChatAudio(blob: Blob) {
+    if (!language) return;
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : "");
+      reader.onerror = () => reject(new Error("Failed to read audio"));
+      reader.readAsDataURL(blob);
+    });
+
+    const res = await fetch("/api/transcribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        audioBase64: dataUrl,
+        mimeType: blob.type || "audio/webm",
+        language,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error("Transcription failed");
+    }
+
+    const data = (await res.json()) as { text?: string };
+    const text = (data.text || "").trim();
+    if (text) {
+      await sendQuickChatMessage(text, { force: true });
+    }
+  }
+
+  async function toggleQuickChatRecording() {
+    if (!quickChatVoiceReady) return;
+    if (quickChatRecorderRef.current && quickChatRecording) {
+      quickChatRecorderRef.current.stop();
+      setQuickChatRecording(false);
+      return;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const recorder = new MediaRecorder(stream);
+    quickChatRecorderRef.current = recorder;
+    quickChatChunksRef.current = [];
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        quickChatChunksRef.current.push(event.data);
+      }
+    };
+
+    recorder.onstop = async () => {
+      const blob = new Blob(quickChatChunksRef.current, {
+        type: recorder.mimeType || "audio/webm",
+      });
+      stream.getTracks().forEach((track) => track.stop());
+      quickChatRecorderRef.current = null;
+      quickChatChunksRef.current = [];
+      setQuickChatRecording(false);
+      if (!blob.size) return;
+      setQuickChatLoading(true);
+      try {
+        await transcribeQuickChatAudio(blob);
+      } catch {
+        setQuickChatMessages((current) => [
+          ...current,
+          {
+            id: makeId(),
+            role: "assistant",
+            payload: {
+              mode: "answer",
+              title: "Voice",
+              text: "I could not transcribe that. Try again.",
+            },
+          },
+        ]);
+      } finally {
+        setQuickChatLoading(false);
+      }
+    };
+
+    recorder.start();
+    setQuickChatRecording(true);
+    setQuickChatOpen(true);
   }
 
   function toSurgeItem(record: SurgeProgressRecord): SurgeItem {
@@ -6618,6 +6876,125 @@ export default function Home() {
     </section>
   );
 
+  const quickChatWidget = (
+    <div className={`quick-chat-shell${quickChatOpen ? " open" : ""}${quickChatLarge ? " large" : ""}`}>
+      {quickChatOpen ? (
+        <section className="quick-chat-panel">
+          <div className="quick-chat-header">
+            <div>
+              <div className="quick-chat-title">Quick Chat</div>
+              <div className="quick-chat-sub">Short help, fast answers.</div>
+            </div>
+            <div className="quick-chat-header-actions">
+              <button
+                type="button"
+                className="ghost quick-chat-header-btn"
+                onClick={() => setQuickChatLarge((current) => !current)}
+              >
+                {quickChatLarge ? "Small" : "Large"}
+              </button>
+              <button
+                type="button"
+                className="ghost quick-chat-header-btn"
+                onClick={() => setQuickChatOpen(false)}
+              >
+                Minimize
+              </button>
+            </div>
+          </div>
+          <div ref={quickChatMessagesRef} className="quick-chat-messages">
+            {quickChatMessages.length ? (
+              quickChatMessages.map((message) =>
+                message.role === "user" ? (
+                  <div key={message.id} className="quick-chat-row user">
+                    <div className="quick-chat-bubble user">{message.text}</div>
+                  </div>
+                ) : (
+                  <div key={message.id} className="quick-chat-row assistant">
+                    <div className={`quick-chat-card ${message.payload?.mode || "answer"}`}>
+                      <div className="quick-chat-card-top">
+                        <div className="quick-chat-card-title">{message.payload?.title || "Quick help"}</div>
+                        {message.payload?.verdict ? (
+                          <span className={`quick-chat-badge ${message.payload.verdict}`}>{message.payload.verdict}</span>
+                        ) : null}
+                      </div>
+                      {message.payload?.text ? <div className="quick-chat-body">{message.payload.text}</div> : null}
+                      {message.payload?.targetText ? (
+                        <div className="quick-chat-target">{message.payload.targetText}</div>
+                      ) : null}
+                      {message.payload?.improved ? (
+                        <div className="quick-chat-improved">{message.payload.improved}</div>
+                      ) : null}
+                      {message.payload?.translation ? (
+                        <div className="quick-chat-translation">{message.payload.translation}</div>
+                      ) : null}
+                      {message.payload?.note ? <div className="quick-chat-note">{message.payload.note}</div> : null}
+                      {message.payload?.ttsText ? (
+                        <button
+                          type="button"
+                          className="ghost quick-chat-play"
+                          onClick={() => void playFlashcardAudio("quick", message.payload?.ttsText || "")}
+                        >
+                          Play
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                )
+              )
+            ) : (
+              <div className="quick-chat-empty">
+                Ask in English for a translation, write in {targetLabel} for a correction, or say <code>say ...</code>.
+              </div>
+            )}
+            {quickChatLoading ? <div className="quick-chat-loading">Thinking...</div> : null}
+          </div>
+          <div className="quick-chat-composer">
+            <textarea
+              value={quickChatInput}
+              onChange={(event) => setQuickChatInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void sendQuickChatMessage(quickChatInput);
+                }
+              }}
+              rows={1}
+              placeholder="Translate, check, or say..."
+            />
+            <div className="quick-chat-actions">
+              {quickChatVoiceReady ? (
+                <button
+                  type="button"
+                  className={`ghost quick-chat-mic${quickChatRecording ? " recording" : ""}`}
+                  onClick={() => void toggleQuickChatRecording()}
+                >
+                  {quickChatRecording ? "Stop" : "Mic"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="solid quick-chat-send"
+                onClick={() => void sendQuickChatMessage(quickChatInput)}
+                disabled={quickChatLoading || !quickChatInput.trim()}
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : (
+        <button
+          type="button"
+          className="quick-chat-bubble-launch"
+          onClick={() => setQuickChatOpen(true)}
+        >
+          Chat
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div className="app-shell" onPointerDownCapture={handleAppPointerDownCapture}>
       <header
@@ -7327,6 +7704,8 @@ export default function Home() {
           </div>
         </div>
       ) : null}
+
+      {authUser ? quickChatWidget : null}
 
     </div>
   );

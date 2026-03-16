@@ -3325,6 +3325,206 @@ textarea {
   text-align: right;
 }
 
+.quick-chat-shell {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+}
+
+.quick-chat-panel {
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(72vh, 680px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(24px);
+}
+
+.quick-chat-shell.large .quick-chat-panel {
+  width: min(460px, calc(100vw - 24px));
+  max-height: min(80vh, 760px);
+}
+
+.quick-chat-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.quick-chat-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.quick-chat-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.quick-chat-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.quick-chat-header-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.quick-chat-messages {
+  display: grid;
+  gap: 10px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.quick-chat-row.user {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.quick-chat-row.assistant {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.quick-chat-bubble.user {
+  max-width: 88%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+.quick-chat-card {
+  max-width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.quick-chat-card.translation,
+.quick-chat-card.correction,
+.quick-chat-card.tts {
+  box-shadow: 0 0 0 1px rgba(255, 208, 84, 0.08);
+}
+
+.quick-chat-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.quick-chat-card-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.quick-chat-badge {
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.quick-chat-badge.ok {
+  background: rgba(46, 176, 101, 0.14);
+  color: #2fb065;
+}
+
+.quick-chat-badge.fix {
+  background: rgba(255, 208, 84, 0.14);
+  color: #ffcf5a;
+}
+
+.quick-chat-badge.note {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+}
+
+.quick-chat-body,
+.quick-chat-translation,
+.quick-chat-note {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.quick-chat-target,
+.quick-chat-improved {
+  font-size: 22px;
+  line-height: 1.15;
+  color: var(--ink);
+}
+
+.quick-chat-translation,
+.quick-chat-note {
+  color: var(--muted);
+}
+
+.quick-chat-play {
+  justify-self: start;
+}
+
+.quick-chat-empty,
+.quick-chat-loading {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.quick-chat-composer {
+  display: grid;
+  gap: 8px;
+}
+
+.quick-chat-composer textarea {
+  width: 100%;
+  min-height: 44px;
+  max-height: 120px;
+  resize: none;
+}
+
+.quick-chat-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.quick-chat-mic.recording {
+  background: rgba(255, 208, 84, 0.16);
+  box-shadow: 0 0 0 1px rgba(255, 208, 84, 0.18), 0 0 18px rgba(255, 208, 84, 0.12);
+}
+
+.quick-chat-send {
+  min-width: 92px;
+}
+
+.quick-chat-bubble-launch {
+  min-width: 72px;
+  min-height: 72px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
 .surge-mastered-list {
   display: grid;
   gap: 10px;
@@ -3425,5 +3625,29 @@ textarea {
 
   .surge-card-word {
     font-size: clamp(20px, 7vw, 28px);
+  }
+
+  .quick-chat-shell {
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+  }
+
+  .quick-chat-panel,
+  .quick-chat-shell.large .quick-chat-panel {
+    width: 100%;
+    max-height: 68vh;
+  }
+
+  .quick-chat-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quick-chat-bubble-launch {
+    width: 64px;
+    min-width: 64px;
+    min-height: 64px;
+    margin-left: auto;
   }
 }
