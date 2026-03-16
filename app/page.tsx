@@ -81,7 +81,7 @@ type SuggestionPayload = {
   suggestion: string;
 };
 
-type VocabScope = "chat" | "common" | "scenario" | "topic" | "surge" | "example";
+type VocabScope = "chat" | "common" | "sentence" | "scenario" | "topic" | "surge" | "example";
 type ExampleScope = "chat" | "common" | "scenario" | "topic";
 type ThemeMode = "dark" | "light";
 type ChatMode = "scenario" | "buddy";
@@ -126,16 +126,17 @@ export default function Home() {
   const [addLanguageOpen, setAddLanguageOpen] = useState<boolean>(false);
   const [theme, setTheme] = useState<ThemeMode>("dark");
   const [isCompactViewport, setIsCompactViewport] = useState<boolean>(false);
-  const [isStandaloneApp, setIsStandaloneApp] = useState<boolean>(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [mobileHeaderHidden, setMobileHeaderHidden] = useState<boolean>(false);
   const [mobileVocabTools, setMobileVocabTools] = useState<{
     common: boolean;
+    sentence: boolean;
     scenario: boolean;
     topic: boolean;
     surge: boolean;
   }>({
     common: false,
+    sentence: false,
     scenario: false,
     topic: false,
     surge: false,
@@ -147,7 +148,7 @@ export default function Home() {
   const [loadingProgress, setLoadingProgress] = useState<boolean>(false);
 
   const [view, setView] = useState<
-    "dashboard" | "chat" | "common" | "scenario-vocab" | "scenario-detail" | "topic-detail" | "surge"
+    "dashboard" | "chat" | "common" | "sentences" | "scenario-vocab" | "scenario-detail" | "topic-detail" | "surge"
   >("dashboard");
   const [activeScenario, setActiveScenario] = useState<ScenarioDefinition | null>(null);
   const [taskText, setTaskText] = useState<string>("");
@@ -180,6 +181,11 @@ export default function Home() {
   const [studyFront, setStudyFront] = useState<"word" | "translation">("word");
   const [studyFlipped, setStudyFlipped] = useState<Record<number, boolean>>({});
   const [studyLoading, setStudyLoading] = useState<boolean>(false);
+  const [sentencePack, setSentencePack] = useState<StudyPack | null>(null);
+  const [sentenceMode, setSentenceMode] = useState<"list" | "cards">("list");
+  const [sentenceFront, setSentenceFront] = useState<"word" | "translation">("word");
+  const [sentenceFlipped, setSentenceFlipped] = useState<Record<number, boolean>>({});
+  const [sentenceLoading, setSentenceLoading] = useState<boolean>(false);
   const [topicVocabMap, setTopicVocabMap] = useState<Record<string, StudyPack>>({});
   const [topicVocabMode, setTopicVocabMode] = useState<"list" | "cards">("list");
   const [topicVocabFront, setTopicVocabFront] = useState<"word" | "translation">("word");
@@ -208,6 +214,8 @@ export default function Home() {
   const [showStarredOnly, setShowStarredOnly] = useState<boolean>(false);
   const [showStudyStarredOnly, setShowStudyStarredOnly] = useState<boolean>(false);
   const [showStudyArchivedOnly, setShowStudyArchivedOnly] = useState<boolean>(false);
+  const [showSentenceStarredOnly, setShowSentenceStarredOnly] = useState<boolean>(false);
+  const [showSentenceArchivedOnly, setShowSentenceArchivedOnly] = useState<boolean>(false);
   const [showScenarioStarredOnly, setShowScenarioStarredOnly] = useState<boolean>(false);
   const [holdDeleteId, setHoldDeleteId] = useState<string | null>(null);
   const [surgeProgressMap, setSurgeProgressMap] = useState<Record<string, SurgeProgressRecord>>({});
@@ -251,6 +259,7 @@ export default function Home() {
     const savedVocab = localStorage.getItem("lingoarc_vocab");
     const savedFront = localStorage.getItem("lingoarc_vocab_front");
     const savedStudy = localStorage.getItem("lingoarc_study_pack");
+    const savedSentencePack = localStorage.getItem("lingoarc_sentence_pack");
     const savedScenarioVocab = localStorage.getItem("lingoarc_scenario_vocab");
     const savedTopicVocab = localStorage.getItem("lingoarc_topic_vocab");
     const savedSurgeModes = localStorage.getItem(SURGE_MODE_KEY);
@@ -308,6 +317,16 @@ export default function Home() {
     if (savedTheme === "light" || savedTheme === "dark") {
       setTheme(savedTheme);
     }
+    if (savedSentencePack) {
+      try {
+        const parsed = JSON.parse(savedSentencePack) as StudyPack;
+        if (parsed && typeof parsed.language === "string" && Array.isArray(parsed.entries)) {
+          setSentencePack(parsed);
+        }
+      } catch {
+        // Ignore malformed sentence cache
+      }
+    }
     if (savedSurgeModes) {
       try {
         setSurgeModes(normalizeSurgeModePreferences(JSON.parse(savedSurgeModes)));
@@ -357,24 +376,6 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia("(display-mode: standalone)");
-    const syncStandalone = () => {
-      const iosStandalone = Boolean(
-        (window.navigator as Navigator & { standalone?: boolean }).standalone
-      );
-      setIsStandaloneApp(mediaQuery.matches || iosStandalone);
-    };
-
-    syncStandalone();
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", syncStandalone);
-      return () => mediaQuery.removeEventListener("change", syncStandalone);
-    }
-    mediaQuery.addListener(syncStandalone);
-    return () => mediaQuery.removeListener(syncStandalone);
-  }, []);
-
-  useEffect(() => {
     if (!isCompactViewport) return;
     let lastScrollY = window.scrollY;
     const onScroll = () => {
@@ -401,6 +402,7 @@ export default function Home() {
     setMobileHeaderHidden(false);
     setMobileVocabTools({
       common: false,
+      sentence: false,
       scenario: false,
       topic: false,
       surge: false,
@@ -471,6 +473,7 @@ export default function Home() {
     const savedEntries: Array<StudyEntry | VocabEntry> = [
       ...vocabEntries.filter((entry) => !entry.archived),
       ...(studyPack?.entries.filter((entry) => !entry.archived) ?? []),
+      ...(sentencePack?.entries.filter((entry) => !entry.archived) ?? []),
       ...Object.values(scenarioVocabMap).flatMap((pack) => pack.entries.filter((entry) => !entry.archived)),
       ...Object.values(topicVocabMap).flatMap((pack) => pack.entries.filter((entry) => !entry.archived)),
     ];
@@ -543,6 +546,7 @@ export default function Home() {
     profileName,
     progressMap,
     scenarioVocabMap,
+    sentencePack,
     studyPack,
     surgeProgressMap,
     surgeSession,
@@ -678,8 +682,18 @@ export default function Home() {
   useEffect(() => {
     if (studyPack) {
       localStorage.setItem("lingoarc_study_pack", JSON.stringify(studyPack));
+      return;
     }
+    localStorage.removeItem("lingoarc_study_pack");
   }, [studyPack]);
+
+  useEffect(() => {
+    if (sentencePack) {
+      localStorage.setItem("lingoarc_sentence_pack", JSON.stringify(sentencePack));
+      return;
+    }
+    localStorage.removeItem("lingoarc_sentence_pack");
+  }, [sentencePack]);
 
   useEffect(() => {
     localStorage.setItem("lingoarc_scenario_vocab", JSON.stringify(scenarioVocabMap));
@@ -756,6 +770,7 @@ export default function Home() {
       setSurgeSession(restoreLocalSurgeSession(language, readLocalSurgeProgress(language)));
 
       const savedStudy = localStorage.getItem("lingoarc_study_pack");
+      const savedSentencePack = localStorage.getItem("lingoarc_sentence_pack");
       if (!savedStudy) {
         setStudyPack(null);
       } else {
@@ -768,6 +783,19 @@ export default function Home() {
           }
         } catch {
           setStudyPack(null);
+        }
+      }
+
+      if (!savedSentencePack) {
+        setSentencePack(null);
+      } else {
+        try {
+          const parsed = JSON.parse(savedSentencePack) as StudyPack;
+          if (parsed && typeof parsed.language === "string" && Array.isArray(parsed.entries)) {
+            setSentencePack(parsed);
+          }
+        } catch {
+          setSentencePack(null);
         }
       }
 
@@ -891,6 +919,7 @@ export default function Home() {
       setLanguage(null);
       setLanguageOptions([]);
       setStudyPack(null);
+      setSentencePack(null);
       setScenarioVocabMap({});
       setTopicVocabMap({});
       setSurgeProgressMap({});
@@ -1100,6 +1129,7 @@ export default function Home() {
 
     const chatEntries: VocabEntry[] = [];
     const commonEntries: StudyEntry[] = [];
+    const sentenceEntries: StudyEntry[] = [];
     const scenarioMap: Record<string, StudyPack> = {};
     const topicMap: Record<string, StudyPack> = {};
 
@@ -1125,6 +1155,8 @@ export default function Home() {
       };
       if (row.scope === "common") {
         commonEntries.push(entry);
+      } else if (row.scope === "sentence") {
+        sentenceEntries.push(entry);
       } else if (row.scope === "scenario" && row.scenario_id) {
         if (!scenarioMap[row.scenario_id]) {
           scenarioMap[row.scenario_id] = { language: activeLanguage, entries: [], archived: false };
@@ -1144,6 +1176,12 @@ export default function Home() {
       setStudyPack({ language: activeLanguage, entries: dedupedCommon });
     } else {
       setStudyPack(null);
+    }
+    const dedupedSentence = mergeUniqueEntries([], sentenceEntries).merged;
+    if (dedupedSentence.length) {
+      setSentencePack({ language: activeLanguage, entries: dedupedSentence });
+    } else {
+      setSentencePack(null);
     }
     const dedupedScenarioMap: Record<string, StudyPack> = {};
     Object.entries(scenarioMap).forEach(([key, pack]) => {
@@ -1483,7 +1521,7 @@ export default function Home() {
   }
 
   async function upsertUserVocab(rows: Array<{
-    scope: "chat" | "common" | "scenario" | "topic";
+    scope: "chat" | "common" | "sentence" | "scenario" | "topic";
     scenarioId?: string | null;
     wordKey: string;
     word: string;
@@ -1514,7 +1552,7 @@ export default function Home() {
   }
 
   async function deleteUserVocab(
-    scope: "chat" | "common" | "scenario" | "topic",
+    scope: "chat" | "common" | "sentence" | "scenario" | "topic",
     wordKey: string,
     scenarioId?: string | null
   ) {
@@ -1534,7 +1572,7 @@ export default function Home() {
     await query;
   }
 
-  async function clearUserVocabScope(scope: "common" | "scenario" | "topic", scenarioId?: string | null) {
+  async function clearUserVocabScope(scope: "common" | "sentence" | "scenario" | "topic", scenarioId?: string | null) {
     if (!authUser || !language) return;
     let query = supabase
       .from("user_vocab")
@@ -1617,6 +1655,30 @@ export default function Home() {
     setStudyPack({
       language: studyPack.language,
       entries: studyPack.entries.map((entry) => ({
+        ...entry,
+        archived: entry.starred ? entry.archived : true,
+      })),
+    });
+  }
+
+  async function archiveSentenceUnstarred() {
+    if (!authUser || !language || !sentencePack) return;
+    const keys = sentencePack.entries
+      .filter((entry) => !entry.starred)
+      .map((entry) => normalizeWord(entry.word))
+      .filter(Boolean);
+    if (keys.length) {
+      await supabase
+        .from("user_vocab")
+        .update({ archived: true })
+        .eq("user_id", authUser.id)
+        .eq("language", language)
+        .eq("scope", "sentence")
+        .in("word_key", keys);
+    }
+    setSentencePack({
+      language: sentencePack.language,
+      entries: sentencePack.entries.map((entry) => ({
         ...entry,
         archived: entry.starred ? entry.archived : true,
       })),
@@ -2281,7 +2343,7 @@ export default function Home() {
     text: string,
     keyPrefix: string,
     wordClassName?: string,
-    context?: { scope?: "chat" | "common" | "scenario" | "topic"; scenarioId?: string | null; sentence?: string }
+    context?: { scope?: "chat" | "common" | "sentence" | "scenario" | "topic"; scenarioId?: string | null; sentence?: string }
   ) {
     const regex = /\s+|\p{L}[\p{L}\p{M}\p{Nd}\p{Pc}\p{Pd}]*|[^\s\p{L}]+/gu;
     const tokens = Array.from(text.matchAll(regex)).map((match) => match[0]);
@@ -2332,7 +2394,7 @@ export default function Home() {
     event: React.MouseEvent<HTMLSpanElement>,
     target: HTMLSpanElement,
     word: string,
-    context?: { scope?: "chat" | "common" | "scenario" | "topic"; scenarioId?: string | null; sentence?: string }
+    context?: { scope?: "chat" | "common" | "sentence" | "scenario" | "topic"; scenarioId?: string | null; sentence?: string }
   ) {
     event.stopPropagation();
     ignoreWindowClickRef.current = true;
@@ -2451,7 +2513,7 @@ export default function Home() {
   function addWordToList(
     word: string,
     translation: string,
-    scope: "chat" | "common" | "scenario" | "topic",
+    scope: "chat" | "common" | "sentence" | "scenario" | "topic",
     scenarioId?: string | null
   ) {
     if (scope === "chat") {
@@ -2478,6 +2540,39 @@ export default function Home() {
         void upsertUserVocab([
           {
             scope: "common",
+            scenarioId: null,
+            wordKey: key,
+            word,
+            translation,
+            starred: false,
+            count: 1,
+            lastClicked: Date.now(),
+            archived: false,
+          },
+        ]);
+      }
+      return;
+    }
+    if (scope === "sentence") {
+      const key = normalizeWord(word);
+      setSentencePack((prev) => {
+        const entries = prev?.entries || [];
+        const index = entries.findIndex((entry) => normalizeWord(entry.word) === key);
+        if (index !== -1) {
+          const nextEntries = entries.map((entry, idx) =>
+            idx === index
+              ? { ...entry, translation: translation || entry.translation, archived: false }
+              : entry
+          );
+          return { language: language || "", entries: nextEntries };
+        }
+        const nextEntries = [...entries, { word, translation, starred: false, archived: false }];
+        return { language: language || "", entries: nextEntries };
+      });
+      if (key) {
+        void upsertUserVocab([
+          {
+            scope: "sentence",
             scenarioId: null,
             wordKey: key,
             word,
@@ -2634,6 +2729,12 @@ export default function Home() {
     void clearUserVocabScope("common");
   }
 
+  function clearSentenceStudy() {
+    setSentencePack(null);
+    setSentenceFlipped({});
+    void clearUserVocabScope("sentence");
+  }
+
   function toggleStudyStar(index: number) {
     const target = studyPack?.entries[index];
     setStudyPack((prev) => {
@@ -2647,6 +2748,32 @@ export default function Home() {
       void upsertUserVocab([
         {
           scope: "common",
+          scenarioId: null,
+          wordKey: normalizeWord(target.word),
+          word: target.word,
+          translation: target.translation,
+          starred: !target.starred,
+          count: 1,
+          lastClicked: Date.now(),
+          archived: Boolean(target.archived),
+        },
+      ]);
+    }
+  }
+
+  function toggleSentenceStar(index: number) {
+    const target = sentencePack?.entries[index];
+    setSentencePack((prev) => {
+      if (!prev) return prev;
+      const next = prev.entries.map((entry, i) =>
+        i === index ? { ...entry, starred: !entry.starred } : entry
+      );
+      return { ...prev, entries: next };
+    });
+    if (target) {
+      void upsertUserVocab([
+        {
+          scope: "sentence",
           scenarioId: null,
           wordKey: normalizeWord(target.word),
           word: target.word,
@@ -2680,6 +2807,13 @@ export default function Home() {
 
   function toggleStudyCard(index: number) {
     setStudyFlipped((prev) => ({
+      ...prev,
+      [index]: !prev[index],
+    }));
+  }
+
+  function toggleSentenceCard(index: number) {
+    setSentenceFlipped((prev) => ({
       ...prev,
       [index]: !prev[index],
     }));
@@ -2889,9 +3023,10 @@ export default function Home() {
     return Boolean(preferences[phase]);
   }
 
-  function toggleMobileVocabTools(panel: "common" | "scenario" | "topic" | "surge") {
+  function toggleMobileVocabTools(panel: "common" | "sentence" | "scenario" | "topic" | "surge") {
     setMobileVocabTools((current) => ({
       common: false,
+      sentence: false,
       scenario: false,
       topic: false,
       surge: false,
@@ -2952,6 +3087,7 @@ export default function Home() {
         .filter((record) => record.status === "known" || record.stage >= 1)
         .map((record) => record.itemText),
       ...(studyPack?.entries.filter((entry) => !entry.archived).map((entry) => entry.word) ?? []),
+      ...(sentencePack?.entries.filter((entry) => !entry.archived).map((entry) => entry.word) ?? []),
       ...Object.values(scenarioVocabMap).flatMap((pack) =>
         pack.entries.filter((entry) => !entry.archived).map((entry) => entry.word)
       ),
@@ -3743,6 +3879,27 @@ export default function Home() {
     }
   }
 
+  function deleteSentenceEntry(index: number) {
+    const target = sentencePack?.entries[index];
+    setSentencePack((prev) => {
+      if (!prev) return prev;
+      const next = prev.entries.filter((_, i) => i !== index);
+      return { ...prev, entries: next };
+    });
+    setSentenceFlipped((prev) => {
+      const next: Record<number, boolean> = {};
+      Object.keys(prev).forEach((key) => {
+        const idx = Number(key);
+        if (Number.isNaN(idx) || idx === index) return;
+        next[idx > index ? idx - 1 : idx] = prev[idx];
+      });
+      return next;
+    });
+    if (target) {
+      void deleteUserVocab("sentence", normalizeWord(target.word));
+    }
+  }
+
   async function archiveStudyEntry(index: number) {
     if (!authUser || !language || !studyPack) return;
     const target = studyPack.entries[index];
@@ -3760,6 +3917,26 @@ export default function Home() {
       .eq("user_id", authUser.id)
       .eq("language", language)
       .eq("scope", "common")
+      .eq("word_key", normalizeWord(target.word));
+  }
+
+  async function archiveSentenceEntry(index: number) {
+    if (!authUser || !language || !sentencePack) return;
+    const target = sentencePack.entries[index];
+    if (!target) return;
+    setSentencePack((prev) => {
+      if (!prev) return prev;
+      const next = prev.entries.map((entry, i) =>
+        i === index ? { ...entry, archived: true } : entry
+      );
+      return { ...prev, entries: next };
+    });
+    await supabase
+      .from("user_vocab")
+      .update({ archived: true })
+      .eq("user_id", authUser.id)
+      .eq("language", language)
+      .eq("scope", "sentence")
       .eq("word_key", normalizeWord(target.word));
   }
 
@@ -3982,6 +4159,43 @@ export default function Home() {
     }
   }
 
+  async function generateSentenceWords(count: number, level?: "core" | "advanced") {
+    if (!language || sentenceLoading) return;
+    setSentenceLoading(true);
+    try {
+      const existingEntries = sentencePack?.entries ?? [];
+      const existing = existingEntries.map((entry) => entry.word);
+      const res = await fetch("/api/vocab-list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language, count, existing, level, unitType: "sentence" }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { items: StudyEntry[] };
+      if (!Array.isArray(data.items) || data.items.length === 0) return;
+      const incoming = data.items.map((item) => ({ ...item, starred: item.starred ?? false }));
+      const { merged, added } = mergeUniqueEntries(existingEntries, incoming);
+
+      setSentencePack({ language, entries: merged });
+
+      const rows = added
+        .map((item) => ({
+          scope: "sentence" as const,
+          scenarioId: null,
+          wordKey: normalizeWord(item.word),
+          word: item.word,
+          translation: item.translation,
+          starred: Boolean(item.starred),
+          count: 1,
+          lastClicked: Date.now(),
+        }))
+        .filter((row) => row.wordKey);
+      void upsertUserVocab(rows);
+    } finally {
+      setSentenceLoading(false);
+    }
+  }
+
   async function generateScenarioWords(count: number, scenario: ScenarioDefinition) {
     if (!language || scenarioVocabLoading) return;
     setScenarioVocabLoading(true);
@@ -4116,6 +4330,10 @@ export default function Home() {
   const commonWordCount = useMemo(
     () => studyPack?.entries.filter((entry) => !entry.archived).length || 0,
     [studyPack]
+  );
+  const sentenceCount = useMemo(
+    () => sentencePack?.entries.filter((entry) => !entry.archived).length || 0,
+    [sentencePack]
   );
   const scenarioWordCount = useMemo(
     () =>
@@ -4304,6 +4522,13 @@ export default function Home() {
       .filter((item) => (showStudyArchivedOnly ? item.entry.archived : !item.entry.archived))
       .filter((item) => (showStudyStarredOnly ? item.entry.starred : true));
   }, [studyPack, showStudyArchivedOnly, showStudyStarredOnly]);
+  const sentenceVisibleItems = useMemo(() => {
+    const entries = sentencePack?.entries ?? [];
+    return entries
+      .map((entry, index) => ({ entry, index }))
+      .filter((item) => (showSentenceArchivedOnly ? item.entry.archived : !item.entry.archived))
+      .filter((item) => (showSentenceStarredOnly ? item.entry.starred : true));
+  }, [sentencePack, showSentenceArchivedOnly, showSentenceStarredOnly]);
 
   const filteredVocab = useMemo(() => {
     if (!showStarredOnly) return sortedVocab;
@@ -4922,6 +5147,266 @@ export default function Home() {
     </section>
   );
 
+  const sentenceWordsView = (
+    <section className="chat-shell vocab-shell">
+      <div className="subtle-back">
+        <button type="button" className="ghost subtle-back-btn" onClick={() => setView("dashboard")}>
+          Back
+        </button>
+      </div>
+      <div className="vocab-mobile-bar">
+        <div className="vocab-tabs">
+          <button
+            type="button"
+            className={`vocab-tab-btn ${sentenceMode === "list" ? "active" : ""}`}
+            onClick={() => setSentenceMode("list")}
+          >
+            List
+          </button>
+          <button
+            type="button"
+            className={`vocab-tab-btn ${sentenceMode === "cards" ? "active" : ""}`}
+            onClick={() => setSentenceMode("cards")}
+          >
+            Flashcards
+          </button>
+        </div>
+        {isCompactViewport ? (
+          <button
+            type="button"
+            className="ghost mobile-tools-toggle"
+            onClick={() => toggleMobileVocabTools("sentence")}
+          >
+            {mobileVocabTools.sentence ? "Hide tools" : "Tools"}
+          </button>
+        ) : null}
+      </div>
+      <div className="task-banner vocab-banner vocab-banner-compact">
+        <div className="task-label">Sentence vocabulary</div>
+        <div className="task-text">{sentenceVisibleItems.length} ready</div>
+        {!isCompactViewport || mobileVocabTools.sentence ? (
+          <div className="vocab-toolbar-wrap">
+            <div className="vocab-toolbar">
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  setSentenceFront((prev) => (prev === "word" ? "translation" : "word"));
+                  setSentenceFlipped({});
+                }}
+              >
+                Start: {sentenceFront === "word" ? targetLabel : "English"}
+              </button>
+              <div className="vocab-toolbar-divider" />
+              <div className="action-fab" aria-label="Generate sentences">
+                <button type="button" className="ghost action-fab-main">
+                  Generate
+                </button>
+                <div className="action-fab-menu">
+                  <button
+                    type="button"
+                    className="ghost action-fab-item"
+                    onClick={() => generateSentenceWords(20)}
+                    disabled={!language || sentenceLoading}
+                  >
+                    {sentenceLoading ? "Generating" : "Generate 20"}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost action-fab-item"
+                    onClick={() => generateSentenceWords(10)}
+                    disabled={!language || sentenceLoading}
+                  >
+                    {sentenceLoading ? "Generating" : "Generate 10 more"}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost action-fab-item"
+                    onClick={() => generateSentenceWords(10, "advanced")}
+                    disabled={!language || sentenceLoading}
+                  >
+                    {sentenceLoading ? "Generating" : "More flexible patterns"}
+                  </button>
+                </div>
+              </div>
+              <button type="button" className="ghost" onClick={() => void archiveSentenceUnstarred()}>
+                Archive all but starred
+              </button>
+              <button type="button" className="ghost" onClick={clearSentenceStudy}>
+                Clear
+              </button>
+              <div className="toolbar-right">
+                <button
+                  type="button"
+                  className={`toolbar-archive-toggle ${showSentenceArchivedOnly ? "active" : ""}`}
+                  onClick={() => setShowSentenceArchivedOnly((prev) => !prev)}
+                  aria-pressed={showSentenceArchivedOnly}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M4 7h16M6 7v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 7V5h6v2M9.5 12h5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  <span>Archived</span>
+                </button>
+                <button
+                  type="button"
+                  className={`toolbar-star-toggle ${showSentenceStarredOnly ? "active" : ""}`}
+                  onClick={() => setShowSentenceStarredOnly((prev) => !prev)}
+                  aria-pressed={showSentenceStarredOnly}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
+                      fill="currentColor"
+                    />
+                  </svg>
+                  <span>Starred</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+      {!language ? (
+        <p className="dashboard-alert">Set a language above to generate sentence patterns.</p>
+      ) : !sentencePack || sentenceVisibleItems.length === 0 ? (
+        <div className="home-vocab-empty">
+          {showSentenceArchivedOnly ? "No archived sentences yet." : "Generate short everyday sentences to build useful patterns."}
+        </div>
+      ) : sentenceMode === "list" ? (
+        <div className="vocab-list">
+          {sentenceVisibleItems.map(({ entry, index }) => (
+            <div key={`${entry.word}-${index}`} className="vocab-row">
+              <div className="vocab-word">{entry.word}</div>
+              <div className="vocab-translation">{entry.translation}</div>
+              <div className="vocab-actions">
+                <button type="button" className="ghost" onClick={() => toggleSentenceStar(index)}>
+                  {entry.starred ? "Unstar" : "Star"}
+                </button>
+                <button type="button" className="ghost" onClick={() => deleteSentenceEntry(index)}>
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="vocab-cards">
+          {sentenceVisibleItems.map(({ entry, index }) => {
+            const flipped = Boolean(sentenceFlipped[index]);
+            const frontText = sentenceFront === "word" ? entry.word : entry.translation;
+            const backText = sentenceFront === "word" ? entry.translation : entry.word;
+            const pronunciationKey = speechKey("sentence", entry.word);
+            const speechActive = speechPlayingKey === pronunciationKey || speechLoadingKey === pronunciationKey;
+            const holdId = `sentence-${index}`;
+            return (
+              <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
+                <div
+                  className={`vocab-card ${flipped ? "flipped" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => toggleSentenceCard(index)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      toggleSentenceCard(index);
+                    }
+                  }}
+                  aria-pressed={flipped ? "true" : "false"}
+                >
+                  <div className="vocab-card-actions">
+                    <button
+                      type="button"
+                      className={`vocab-card-icon ${entry.starred ? "active" : ""}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleSentenceStar(index);
+                      }}
+                      aria-label="Star"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
+                          fill="currentColor"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      className={`vocab-card-icon ${speechActive ? "active" : ""}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void playFlashcardAudio("sentence", entry.word);
+                      }}
+                      aria-label={speechLoadingKey === pronunciationKey ? "Loading pronunciation" : "Pronounce"}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M5 14h3l4 4V6L8 10H5zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      className={`vocab-card-icon ${holdDeleteId === holdId ? "holding" : ""}`}
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                        if (event.button !== 0) return;
+                        startArchiveHold(holdId, () => deleteSentenceEntry(index));
+                      }}
+                      onPointerUp={(event) => {
+                        event.stopPropagation();
+                        if (event.button !== 0) return;
+                        endArchiveHold(holdId, () => void archiveSentenceEntry(index));
+                      }}
+                      onPointerLeave={(event) => {
+                        event.stopPropagation();
+                        cancelArchiveHold(holdId);
+                      }}
+                      onPointerCancel={(event) => {
+                        event.stopPropagation();
+                        cancelArchiveHold(holdId);
+                      }}
+                      aria-label="Archive (hold to delete)"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M4 7h16M6 7v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 7V5h6v2M9.5 12h5"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  <div className="vocab-card-face">
+                    <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
+                      {flipped ? backText : frontText}
+                    </div>
+                    <div className="vocab-card-hint">{flipped ? "Tap to hide" : "Tap to flip"}</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+
   const scenarioVocabView = (
     <section className="chat-shell">
       <div className="chat-header">
@@ -5534,6 +6019,14 @@ export default function Home() {
             <button
               type="button"
               className="ghost"
+              onClick={() => setView("sentences")}
+              disabled={!language}
+            >
+              Sentences
+            </button>
+            <button
+              type="button"
+              className="ghost"
               onClick={() => setView("scenario-vocab")}
               disabled={!language}
             >
@@ -5577,7 +6070,7 @@ export default function Home() {
               <h2>Word banks</h2>
             </div>
             <div className="dashboard-meta">
-              {loadingProgress ? "Syncing progress" : `${commonWordCount + scenarioWordCount} saved vocab items`}
+              {loadingProgress ? "Syncing progress" : `${commonWordCount + sentenceCount + scenarioWordCount} saved vocab items`}
             </div>
           </div>
           <div className="dashboard-vocab-gateway">
@@ -5590,6 +6083,17 @@ export default function Home() {
               <div className="dashboard-path-top">
                 <div className="dashboard-path-title">Common words</div>
                 <div className="dashboard-path-badge">{commonWordCount}</div>
+              </div>
+            </button>
+            <button
+              type="button"
+              className="dashboard-path-card dashboard-path-card-primary"
+              onClick={() => setView("sentences")}
+              disabled={!language}
+            >
+              <div className="dashboard-path-top">
+                <div className="dashboard-path-title">Sentence vocabulary</div>
+                <div className="dashboard-path-badge">{sentenceCount}</div>
               </div>
             </button>
             <button
@@ -5645,6 +6149,12 @@ export default function Home() {
             <div className="dashboard-path-top">
               <div className="dashboard-path-title">Common words</div>
               <div className="dashboard-path-badge">{commonWordCount}</div>
+            </div>
+          </button>
+          <button type="button" className="dashboard-path-card" onClick={() => setView("sentences")}>
+            <div className="dashboard-path-top">
+              <div className="dashboard-path-title">Sentence vocabulary</div>
+              <div className="dashboard-path-badge">{sentenceCount}</div>
             </div>
           </button>
           <button type="button" className="dashboard-path-card" onClick={() => setView("scenario-vocab")}>
@@ -5903,11 +6413,7 @@ export default function Home() {
   );
 
   return (
-    <div
-      className={`app-shell${isStandaloneApp ? " standalone-app" : ""}`}
-      onPointerDownCapture={handleAppPointerDownCapture}
-    >
-      {!isStandaloneApp ? (
+    <div className="app-shell" onPointerDownCapture={handleAppPointerDownCapture}>
       <header
         className={`top-bar${isCompactViewport ? " compact-header" : ""}${mobileMenuOpen ? " mobile-menu-open" : ""}${mobileHeaderHidden ? " mobile-hidden" : ""}`}
       >
@@ -6050,7 +6556,6 @@ export default function Home() {
           ) : null}
         </div>
       </header>
-      ) : null}
 
       <main className="main-area">
         {authLoading ? (
@@ -6202,6 +6707,8 @@ export default function Home() {
           </section>
         ) : view === "common" ? (
           commonWordsView
+        ) : view === "sentences" ? (
+          sentenceWordsView
         ) : view === "scenario-vocab" ? (
           scenarioVocabView
         ) : view === "scenario-detail" ? (

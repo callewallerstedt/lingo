@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   applicationName: "NeoLingo",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black-translucent",
+    statusBarStyle: "default",
     title: "NeoLingo",
   },
 };
@@ -17,6 +17,10 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#17181c" },
+    { media: "(prefers-color-scheme: light)", color: "#fff7f0" },
+  ],
 };
 
 export default function RootLayout({
