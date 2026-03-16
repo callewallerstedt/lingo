@@ -200,6 +200,7 @@ export default function Home() {
   const [surgeError, setSurgeError] = useState<string | null>(null);
   const [surgeSavedAt, setSurgeSavedAt] = useState<number>(0);
   const [surgeHydrated, setSurgeHydrated] = useState<boolean>(false);
+  const [showSurgeMastered, setShowSurgeMastered] = useState<boolean>(false);
 
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -589,12 +590,11 @@ export default function Home() {
   useEffect(() => {
     if (authLoading || !surgeHydrated) return;
     if (!language) return;
-    if (authUser) return;
     localStorage.setItem(
       `${SURGE_PROGRESS_KEY_PREFIX}${language}`,
       JSON.stringify(surgeProgressMap)
     );
-  }, [authLoading, authUser, language, surgeHydrated, surgeProgressMap]);
+  }, [authLoading, language, surgeHydrated, surgeProgressMap]);
 
 
   useEffect(() => {
@@ -1069,6 +1069,35 @@ export default function Home() {
     }
   }
 
+  function mergeSurgeProgressMaps(
+    serverMap: Record<string, SurgeProgressRecord>,
+    localMap: Record<string, SurgeProgressRecord>
+  ) {
+    const merged: Record<string, SurgeProgressRecord> = { ...serverMap };
+    const localWins: SurgeProgressRecord[] = [];
+
+    Object.entries(localMap).forEach(([itemKey, localRecord]) => {
+      const serverRecord = merged[itemKey];
+      if (!serverRecord) {
+        merged[itemKey] = localRecord;
+        localWins.push(localRecord);
+        return;
+      }
+
+      const serverStamp = serverRecord.updatedAt || serverRecord.lastReviewedAt || serverRecord.createdAt || 0;
+      const localStamp = localRecord.updatedAt || localRecord.lastReviewedAt || localRecord.createdAt || 0;
+      if (localStamp > serverStamp) {
+        merged[itemKey] = {
+          ...serverRecord,
+          ...localRecord,
+        };
+        localWins.push(merged[itemKey]);
+      }
+    });
+
+    return { merged, localWins };
+  }
+
   function sanitizeStoredSurgeItems(
     items: unknown,
     progressByKey: Record<string, SurgeProgressRecord>
@@ -1216,6 +1245,7 @@ export default function Home() {
 
   async function loadSurgeProgress(activeLanguage: string) {
     if (!authUser) return {};
+    const localMirror = readLocalSurgeProgress(activeLanguage);
     const { data, error } = await supabase
       .from("surge_progress")
       .select(
@@ -1225,7 +1255,7 @@ export default function Home() {
       .eq("language", activeLanguage);
 
     if (error) {
-      const fallback = readLocalSurgeProgress(activeLanguage);
+      const fallback = localMirror;
       applySurgeProgressMap(fallback);
       return fallback;
     }
@@ -1253,8 +1283,12 @@ export default function Home() {
         updatedAt: row.updated_at ? Date.parse(row.updated_at) : null,
       };
     });
-    applySurgeProgressMap(nextMap);
-    return nextMap;
+    const { merged, localWins } = mergeSurgeProgressMaps(nextMap, localMirror);
+    applySurgeProgressMap(merged);
+    if (localWins.length) {
+      queueSurgeProgressSync(localWins);
+    }
+    return merged;
   }
 
   async function upsertSurgeProgress(records: SurgeProgressRecord[]) {
@@ -2730,6 +2764,33 @@ export default function Home() {
       .map((record) => toSurgeItem(record));
   }
 
+  function applyImmediateSurgeReplacement(session: SurgeSession) {
+    if (session.phase !== "preview" || session.activeRound.length >= 5) {
+      return session;
+    }
+
+    const usedKeys = getSurgeUsedKeys(session, { includeReserve: false });
+    session.activeRound.forEach((entry) => usedKeys.add(entry.itemKey));
+    const dueItem = getDueSurgeItems(usedKeys)[0];
+    if (dueItem) {
+      return {
+        ...session,
+        activeRound: [...session.activeRound, dueItem],
+      };
+    }
+
+    const reserveItem = session.reserve.find((entry) => !usedKeys.has(entry.itemKey));
+    if (!reserveItem) {
+      return session;
+    }
+
+    return {
+      ...session,
+      reserve: session.reserve.filter((entry) => entry.itemKey !== reserveItem.itemKey),
+      activeRound: [...session.activeRound, reserveItem],
+    };
+  }
+
   async function fetchSurgeBatch(session: SurgeSession, count = 10) {
     if (!language) return [];
     const knownTexts = Object.values(surgeProgressRef.current)
@@ -3024,37 +3085,64 @@ export default function Home() {
       previewSeenKeys: surgeSession.previewSeenKeys.filter((key) => key !== item.itemKey),
     };
 
+    const setIfStillRelevant = (candidate: SurgeSession) => {
+      setSurgeSession((current) => {
+        if (!current || current.language !== candidate.language) {
+          return current;
+        }
+        return candidate;
+      });
+    };
+
     if (nextSession.phase === "preview") {
       const removedIndex = surgeSession.activeRound.findIndex((entry) => entry.itemKey === item.itemKey);
       const preservedIndex =
         removedIndex !== -1 && removedIndex < surgeSession.previewIndex
           ? Math.max(0, surgeSession.previewIndex - 1)
           : surgeSession.previewIndex;
-      nextSession = await fillSurgeRound(
-        {
-          ...nextSession,
-          previewRevealed: false,
-        },
-        nextSession.activeRound
-      );
+      nextSession = applyImmediateSurgeReplacement({
+        ...nextSession,
+        previewRevealed: false,
+      });
       nextSession.previewIndex = Math.min(preservedIndex, Math.max(nextSession.activeRound.length - 1, 0));
       nextSession.previewRevealed = false;
-    } else if (nextSession.phase === "typing") {
-      if (!nextSession.typingQueue.length) {
-        if (nextSession.delayedReviewQueue.length) {
-          nextSession = {
-            ...nextSession,
-            typingQueue: nextSession.delayedReviewQueue.map((entry) => entry.item),
-            delayedReviewQueue: [],
-          };
-        } else {
-          nextSession = await buildNextSurgeRound(nextSession);
-        }
+      setSurgeSession(nextSession);
+
+      let filledSession = nextSession;
+      if (filledSession.activeRound.length < 5) {
+        filledSession = await fillSurgeRound(
+          {
+            ...filledSession,
+            previewRevealed: false,
+          },
+          filledSession.activeRound
+        );
+        filledSession.previewIndex = Math.min(preservedIndex, Math.max(filledSession.activeRound.length - 1, 0));
+        filledSession.previewRevealed = false;
       }
+      if (!filledSession.activeRound.length) {
+        filledSession = await buildNextSurgeRound(filledSession);
+      }
+      setIfStillRelevant(filledSession);
+      return;
     }
 
-    if (!nextSession.activeRound.length && nextSession.phase === "preview") {
-      nextSession = await buildNextSurgeRound(nextSession);
+    if (nextSession.phase === "typing") {
+      if (!nextSession.typingQueue.length && nextSession.delayedReviewQueue.length) {
+        nextSession = {
+          ...nextSession,
+          typingQueue: nextSession.delayedReviewQueue.map((entry) => entry.item),
+          delayedReviewQueue: [],
+        };
+        setSurgeSession(nextSession);
+        return;
+      }
+      setSurgeSession(nextSession);
+      if (!nextSession.typingQueue.length) {
+        const rebuilt = await buildNextSurgeRound(nextSession);
+        setIfStillRelevant(rebuilt);
+      }
+      return;
     }
 
     setSurgeSession(nextSession);
@@ -3821,6 +3909,27 @@ export default function Home() {
       (record) => record.status === "known" || record.stage >= 6
     ).length;
   }, [surgeProgressMap]);
+  const surgeMasteredItems = useMemo(() => {
+    return Object.values(surgeProgressMap)
+      .filter((record) => record.status === "known" || record.stage >= 6)
+      .sort((a, b) => (b.updatedAt || b.lastReviewedAt || 0) - (a.updatedAt || a.lastReviewedAt || 0));
+  }, [surgeProgressMap]);
+  const commonWordCount = useMemo(
+    () => studyPack?.entries.filter((entry) => !entry.archived).length || 0,
+    [studyPack]
+  );
+  const scenarioWordCount = useMemo(
+    () =>
+      Object.values(scenarioVocabMap).reduce(
+        (sum, pack) => sum + pack.entries.filter((entry) => !entry.archived).length,
+        0
+      ),
+    [scenarioVocabMap]
+  );
+  const scenarioDeckCount = useMemo(
+    () => Object.values(scenarioVocabMap).filter((pack) => pack.entries.some((entry) => !entry.archived)).length,
+    [scenarioVocabMap]
+  );
   const surgeInSessionCount = useMemo(() => {
     if (!surgeSession) return 0;
     return dedupeSurgeItems([
@@ -4015,7 +4124,13 @@ export default function Home() {
         <div className="surge-status">
           <div className="surge-status-pill">Due now {surgeDueCount}</div>
           <div className="surge-status-pill">In session {surgeInSessionCount}</div>
-          <div className="surge-status-pill">Mastered {surgeMasteredCount}</div>
+          <button
+            type="button"
+            className="surge-status-pill surge-status-action"
+            onClick={() => setShowSurgeMastered(true)}
+          >
+            Mastered {surgeMasteredCount}
+          </button>
         </div>
       </div>
 
@@ -4250,6 +4365,41 @@ export default function Home() {
 
       {surgeSavedAt ? (
         <div className="surge-footnote">Progress saved {new Date(surgeSavedAt).toLocaleTimeString()}</div>
+      ) : null}
+
+      {showSurgeMastered ? (
+        <div className="suggestion-modal-overlay" onClick={() => setShowSurgeMastered(false)}>
+          <div className="vocab-modal surge-library-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="vocab-modal-header">
+              <div className="vocab-title">Mastered in Surge</div>
+              <div className="vocab-controls">
+                <button type="button" className="ghost" onClick={() => setShowSurgeMastered(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="vocab-modal-body">
+              {surgeMasteredItems.length ? (
+                <div className="surge-mastered-list">
+                  {surgeMasteredItems.map((record) => (
+                    <div key={record.itemKey} className="surge-mastered-row">
+                      <div className="surge-mastered-main">
+                        <div className="surge-mastered-text">{record.itemText}</div>
+                        <div className="surge-mastered-translation">{record.translation}</div>
+                      </div>
+                      <div className="surge-mastered-meta">
+                        <span>{record.itemType === "phrase" ? "Phrase" : "Word"}</span>
+                        <span>{record.status === "known" ? "Known" : `Stage ${record.stage}`}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="home-vocab-empty">Mastered items will show up here as you lock them in.</div>
+              )}
+            </div>
+          </div>
+        </div>
       ) : null}
     </section>
   );
@@ -5094,18 +5244,18 @@ export default function Home() {
             <button
               type="button"
               className="ghost"
-              onClick={() => void startSurgeSession(!surgeSession)}
-              disabled={!language || surgeLoading}
+              onClick={() => setView("common")}
+              disabled={!language}
             >
-              {surgeSession ? "Continue Surge" : "Start Surge"}
+              Common words
             </button>
             <button
               type="button"
               className="ghost"
-              onClick={() => nextScenario && startScenarioChat(nextScenario.scenario)}
-              disabled={!language || !nextScenario}
+              onClick={() => setView("scenario-vocab")}
+              disabled={!language}
             >
-              Start scenario
+              Scenario words
             </button>
           </div>
         </div>
@@ -5141,37 +5291,40 @@ export default function Home() {
         <div className="dashboard-panel dashboard-recommend-panel">
           <div className="dashboard-panel-header">
             <div>
-              <div className="dashboard-section-kicker">What the app thinks you should do</div>
-              <h2>Start with the clearest next move</h2>
+              <div className="dashboard-section-kicker">Vocabulary</div>
+              <h2>Open your saved word banks fast</h2>
             </div>
             <div className="dashboard-meta">
-              {loadingProgress ? "Syncing progress" : `Tracking ${buddyProfileSnapshot.practicedWordCount} practiced items`}
+              {loadingProgress ? "Syncing progress" : `${commonWordCount + scenarioWordCount} saved vocab items`}
             </div>
           </div>
-          <p className="dashboard-panel-copy">{buddyRecommendation.body}</p>
-          <div className="dashboard-recommend-actions">
+          <p className="dashboard-panel-copy">
+            Jump straight into your core vocabulary or open scenario-specific word banks without digging through the rest of the dashboard.
+          </p>
+          <div className="dashboard-vocab-gateway">
             <button
               type="button"
-              className="solid"
-              onClick={() => {
-                if (buddyRecommendation.action.includes("Surge")) {
-                  void startSurgeSession(!surgeSession);
-                  return;
-                }
-                if (buddyRecommendation.action.includes("scenario")) {
-                  if (nextScenario) {
-                    void startScenarioChat(nextScenario.scenario);
-                  }
-                  return;
-                }
-                void startBuddyChat(!buddyResumeAvailable);
-              }}
+              className="dashboard-path-card dashboard-path-card-primary"
+              onClick={() => setView("common")}
               disabled={!language}
             >
-              {buddyRecommendation.action}
+              <div className="dashboard-path-top">
+                <div className="dashboard-path-title">Common words</div>
+                <div className="dashboard-path-badge">{commonWordCount}</div>
+              </div>
+              <div className="dashboard-path-copy">Your everyday basics deck for the highest-frequency words and short phrases.</div>
             </button>
-            <button type="button" className="ghost" onClick={() => setView("common")} disabled={!language}>
-              Review common words
+            <button
+              type="button"
+              className="dashboard-path-card dashboard-path-card-primary"
+              onClick={() => setView("scenario-vocab")}
+              disabled={!language}
+            >
+              <div className="dashboard-path-top">
+                <div className="dashboard-path-title">Scenario vocabulary</div>
+                <div className="dashboard-path-badge">{scenarioDeckCount}</div>
+              </div>
+              <div className="dashboard-path-copy">Word banks grouped by real-life situation, with {scenarioWordCount} saved items ready to revisit.</div>
             </button>
           </div>
         </div>
@@ -5206,25 +5359,27 @@ export default function Home() {
       <section className="dashboard-section">
         <div className="dashboard-panel-header">
           <div>
-            <div className="dashboard-section-kicker">What you can do</div>
-            <h2>Pick one way to practice</h2>
+            <div className="dashboard-section-kicker">Adaptive practice</div>
+            <h2>Train recall after you have words</h2>
           </div>
           <button type="button" className="ghost" onClick={() => setShowTopicModal(true)}>
             + New topic
           </button>
         </div>
         <div className="dashboard-path-grid">
-          <button
-            type="button"
-            className="dashboard-path-card"
-            onClick={() => void startBuddyChat(!buddyResumeAvailable)}
-            disabled={!language}
-          >
+          <button type="button" className="dashboard-path-card" onClick={() => setView("common")}>
             <div className="dashboard-path-top">
-              <div className="dashboard-path-title">Buddy</div>
-              <div className="dashboard-path-badge">{buddyResumeAvailable ? "Resume" : "Adaptive"}</div>
+              <div className="dashboard-path-title">Common words</div>
+              <div className="dashboard-path-badge">{commonWordCount}</div>
             </div>
-            <div className="dashboard-path-copy">Smart conversations, tiny quizzes, and guidance based on what you have actually practiced.</div>
+            <div className="dashboard-path-copy">Review the everyday words and short phrases you need most often.</div>
+          </button>
+          <button type="button" className="dashboard-path-card" onClick={() => setView("scenario-vocab")}>
+            <div className="dashboard-path-top">
+              <div className="dashboard-path-title">Scenario vocabulary</div>
+              <div className="dashboard-path-badge">{scenarioDeckCount}</div>
+            </div>
+            <div className="dashboard-path-copy">Generate and review vocabulary tied to a specific real-life situation.</div>
           </button>
           <button
             type="button"
@@ -5236,21 +5391,19 @@ export default function Home() {
               <div className="dashboard-path-title">Surge</div>
               <div className="dashboard-path-badge">{surgeDueCount} due</div>
             </div>
-            <div className="dashboard-path-copy">Fast core vocabulary loops with previews, matching, typing, and spaced repetition.</div>
+            <div className="dashboard-path-copy">Fast active recall and spaced repetition once you have words to drill.</div>
           </button>
-          <button type="button" className="dashboard-path-card" onClick={() => setView("common")}>
+          <button
+            type="button"
+            className="dashboard-path-card"
+            onClick={() => void startBuddyChat(!buddyResumeAvailable)}
+            disabled={!language}
+          >
             <div className="dashboard-path-top">
-              <div className="dashboard-path-title">Common words</div>
-              <div className="dashboard-path-badge">Basics</div>
+              <div className="dashboard-path-title">Buddy</div>
+              <div className="dashboard-path-badge">{buddyResumeAvailable ? "Resume" : "Adaptive"}</div>
             </div>
-            <div className="dashboard-path-copy">Review the everyday words and short phrases you need most often.</div>
-          </button>
-          <button type="button" className="dashboard-path-card" onClick={() => setView("scenario-vocab")}>
-            <div className="dashboard-path-top">
-              <div className="dashboard-path-title">Scenario vocabulary</div>
-              <div className="dashboard-path-badge">By context</div>
-            </div>
-            <div className="dashboard-path-copy">Generate and review vocabulary tied to a specific real-life situation.</div>
+            <div className="dashboard-path-copy">English-first coaching, small quizzes, and guided output using your saved progress.</div>
           </button>
         </div>
         {dashboardTopicPreview.length ? (
