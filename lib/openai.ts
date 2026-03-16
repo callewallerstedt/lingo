@@ -135,10 +135,12 @@ export async function callOpenAITTS({
   input,
   voice = "alloy",
   instructions,
+  speed,
 }: {
   input: string;
   voice?: string;
   instructions?: string;
+  speed?: number;
 }) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -156,6 +158,7 @@ export async function callOpenAITTS({
       voice,
       input,
       instructions,
+      ...(typeof speed === "number" ? { speed } : {}),
       response_format: "mp3",
     }),
   });

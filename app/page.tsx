@@ -254,6 +254,7 @@ export default function Home() {
   const archiveTriggeredRef = useRef<boolean>(false);
   const speechCacheRef = useRef<Map<string, string>>(new Map());
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const speechPlaybackTokenRef = useRef<number>(0);
   const uiAudioContextRef = useRef<AudioContext | null>(null);
 
   const clientCache = useMemo(() => new Map<string, string>(), []);
@@ -3032,6 +3033,80 @@ export default function Home() {
     return `${language || "none"}:${scope}:${scenarioId || "none"}:${base}`;
   }
 
+  async function getSpeechAudioUrl(key: string, text: string, variant: "slow" | "natural") {
+    const cacheKey = `${key}:${variant}`;
+    let audioUrl = speechCacheRef.current.get(cacheKey);
+    if (audioUrl) {
+      return audioUrl;
+    }
+
+    const res = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language, text, variant }),
+    });
+
+    if (!res.ok) {
+      return null;
+    }
+
+    const blob = await res.blob();
+    if (!blob.size) {
+      return null;
+    }
+
+    audioUrl = URL.createObjectURL(blob);
+    speechCacheRef.current.set(cacheKey, audioUrl);
+    return audioUrl;
+  }
+
+  async function playSpeechSequence(audio: HTMLAudioElement, key: string, urls: string[], token: number) {
+    for (let index = 0; index < urls.length; index += 1) {
+      if (speechPlaybackTokenRef.current !== token) {
+        return;
+      }
+
+      const url = urls[index];
+      await new Promise<void>((resolve, reject) => {
+        const handleEnded = () => {
+          cleanup();
+          resolve();
+        };
+        const handleError = () => {
+          cleanup();
+          reject(new Error("Audio playback failed"));
+        };
+        const cleanup = () => {
+          audio.onended = null;
+          audio.onerror = null;
+        };
+
+        audio.onended = handleEnded;
+        audio.onerror = handleError;
+        audio.src = url;
+        audio.currentTime = 0;
+        void audio.play().then(() => {
+          if (speechPlaybackTokenRef.current !== token) {
+            audio.pause();
+            cleanup();
+            resolve();
+          }
+        }).catch((error) => {
+          cleanup();
+          reject(error);
+        });
+      });
+
+      if (index === 0 && speechPlaybackTokenRef.current === token) {
+        await new Promise((resolve) => window.setTimeout(resolve, 180));
+      }
+    }
+
+    if (speechPlaybackTokenRef.current === token) {
+      setSpeechPlayingKey((current) => (current === key ? null : current));
+    }
+  }
+
   async function playFlashcardAudio(scope: VocabScope, word: string, scenarioId?: string | null) {
     const trimmedWord = word.trim();
     if (!language || !trimmedWord) return;
@@ -3043,54 +3118,40 @@ export default function Home() {
     audioRef.current = audio;
 
     if (speechPlayingKey === key) {
+      speechPlaybackTokenRef.current += 1;
       audio.pause();
       audio.currentTime = 0;
+      audio.onended = null;
+      audio.onerror = null;
       setSpeechPlayingKey(null);
       return;
     }
 
     if (!audio.paused) {
+      speechPlaybackTokenRef.current += 1;
       audio.pause();
       audio.currentTime = 0;
+      audio.onended = null;
+      audio.onerror = null;
     }
-
-    let audioUrl = speechCacheRef.current.get(key);
-
-    if (!audioUrl) {
-      setSpeechLoadingKey(key);
-      try {
-        const res = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ language, text: trimmedWord }),
-        });
-
-        if (!res.ok) return;
-
-        const blob = await res.blob();
-        if (!blob.size) return;
-
-        audioUrl = URL.createObjectURL(blob);
-        speechCacheRef.current.set(key, audioUrl);
-      } finally {
-        setSpeechLoadingKey((current) => (current === key ? null : current));
-      }
-    }
-
-    if (!audioUrl) return;
-
-    audio.onended = () => {
-      setSpeechPlayingKey((current) => (current === key ? null : current));
-    };
-
-    audio.src = audioUrl;
-    audio.currentTime = 0;
-    setSpeechPlayingKey(key);
 
     try {
-      await audio.play();
+      setSpeechLoadingKey(key);
+      const [slowUrl, naturalUrl] = await Promise.all([
+        getSpeechAudioUrl(key, trimmedWord, "slow"),
+        getSpeechAudioUrl(key, trimmedWord, "natural"),
+      ]);
+      if (!slowUrl || !naturalUrl) {
+        return;
+      }
+      setSpeechPlayingKey(key);
+      const token = speechPlaybackTokenRef.current + 1;
+      speechPlaybackTokenRef.current = token;
+      await playSpeechSequence(audio, key, [slowUrl, naturalUrl], token);
     } catch {
       setSpeechPlayingKey((current) => (current === key ? null : current));
+    } finally {
+      setSpeechLoadingKey((current) => (current === key ? null : current));
     }
   }
 
