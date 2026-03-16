@@ -5215,10 +5215,9 @@ export default function Home() {
     <>
       <section className="dashboard-hero">
         <div className="dashboard-hero-copy">
-          <div className="dashboard-kicker">NeoLingo dashboard</div>
+          <div className="dashboard-kicker">Dashboard</div>
           <div>
-            <h1>{language ? `Practice ${language} with a clear next step.` : "Choose a language and start with a clear plan."}</h1>
-            <p>{buddyRecommendation.body}</p>
+            <h1>{language ? language : "Choose a language"}</h1>
           </div>
           <div className="dashboard-hero-actions">
             <button
@@ -5257,19 +5256,19 @@ export default function Home() {
             >
               Scenario words
             </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => void startSurgeSession(!surgeSession)}
+              disabled={!language || surgeLoading}
+            >
+              {surgeSession ? "Surge" : "Start Surge"}
+            </button>
           </div>
         </div>
         <div className="dashboard-plan-card">
-          <div className="dashboard-section-kicker">Recommended now</div>
-          <h2>{buddyRecommendation.title}</h2>
-          <div className="dashboard-plan-list">
-            {dashboardPlanItems.map((item, index) => (
-              <div key={item} className="dashboard-plan-item">
-                <span className="dashboard-plan-step">{index + 1}</span>
-                <span>{item}</span>
-              </div>
-            ))}
-          </div>
+          <div className="dashboard-section-kicker">Next</div>
+          <h2>{buddyRecommendation.action}</h2>
           <div className="dashboard-mini-stats">
             <div className="dashboard-stat-card">
               <div className="dashboard-stat-label">Practiced</div>
@@ -5292,15 +5291,12 @@ export default function Home() {
           <div className="dashboard-panel-header">
             <div>
               <div className="dashboard-section-kicker">Vocabulary</div>
-              <h2>Open your saved word banks fast</h2>
+              <h2>Word banks</h2>
             </div>
             <div className="dashboard-meta">
               {loadingProgress ? "Syncing progress" : `${commonWordCount + scenarioWordCount} saved vocab items`}
             </div>
           </div>
-          <p className="dashboard-panel-copy">
-            Jump straight into your core vocabulary or open scenario-specific word banks without digging through the rest of the dashboard.
-          </p>
           <div className="dashboard-vocab-gateway">
             <button
               type="button"
@@ -5312,7 +5308,6 @@ export default function Home() {
                 <div className="dashboard-path-title">Common words</div>
                 <div className="dashboard-path-badge">{commonWordCount}</div>
               </div>
-              <div className="dashboard-path-copy">Your everyday basics deck for the highest-frequency words and short phrases.</div>
             </button>
             <button
               type="button"
@@ -5324,7 +5319,6 @@ export default function Home() {
                 <div className="dashboard-path-title">Scenario vocabulary</div>
                 <div className="dashboard-path-badge">{scenarioDeckCount}</div>
               </div>
-              <div className="dashboard-path-copy">Word banks grouped by real-life situation, with {scenarioWordCount} saved items ready to revisit.</div>
             </button>
           </div>
         </div>
@@ -5332,8 +5326,8 @@ export default function Home() {
         <div className="dashboard-panel dashboard-buddy-panel">
           <div className="dashboard-panel-header">
             <div>
-              <div className="dashboard-section-kicker">Saved progress</div>
-              <h2>Buddy's read on your level</h2>
+              <div className="dashboard-section-kicker">Progress</div>
+              <h2>Saved</h2>
             </div>
           </div>
           <div className="dashboard-buddy-list">
@@ -5350,17 +5344,14 @@ export default function Home() {
               <span className="dashboard-buddy-value">{buddyProfileSnapshot.recentCount}</span>
             </div>
           </div>
-          <p className="dashboard-panel-copy">
-            Buddy coaches in English first, then uses your saved words, due Surge reviews, and recent practice to decide what to ask next.
-          </p>
         </div>
       </section>
 
       <section className="dashboard-section">
         <div className="dashboard-panel-header">
           <div>
-            <div className="dashboard-section-kicker">Adaptive practice</div>
-            <h2>Train recall after you have words</h2>
+            <div className="dashboard-section-kicker">Practice</div>
+            <h2>Modes</h2>
           </div>
           <button type="button" className="ghost" onClick={() => setShowTopicModal(true)}>
             + New topic
@@ -5372,14 +5363,12 @@ export default function Home() {
               <div className="dashboard-path-title">Common words</div>
               <div className="dashboard-path-badge">{commonWordCount}</div>
             </div>
-            <div className="dashboard-path-copy">Review the everyday words and short phrases you need most often.</div>
           </button>
           <button type="button" className="dashboard-path-card" onClick={() => setView("scenario-vocab")}>
             <div className="dashboard-path-top">
               <div className="dashboard-path-title">Scenario vocabulary</div>
               <div className="dashboard-path-badge">{scenarioDeckCount}</div>
             </div>
-            <div className="dashboard-path-copy">Generate and review vocabulary tied to a specific real-life situation.</div>
           </button>
           <button
             type="button"
@@ -5391,7 +5380,6 @@ export default function Home() {
               <div className="dashboard-path-title">Surge</div>
               <div className="dashboard-path-badge">{surgeDueCount} due</div>
             </div>
-            <div className="dashboard-path-copy">Fast active recall and spaced repetition once you have words to drill.</div>
           </button>
           <button
             type="button"
@@ -5403,7 +5391,6 @@ export default function Home() {
               <div className="dashboard-path-title">Buddy</div>
               <div className="dashboard-path-badge">{buddyResumeAvailable ? "Resume" : "Adaptive"}</div>
             </div>
-            <div className="dashboard-path-copy">English-first coaching, small quizzes, and guided output using your saved progress.</div>
           </button>
         </div>
         {dashboardTopicPreview.length ? (
