@@ -62,6 +62,15 @@ create table if not exists surge_progress (
   unique (user_id, language, item_key)
 );
 
+create table if not exists surge_sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users on delete cascade,
+  language text not null,
+  session_state jsonb not null,
+  updated_at timestamptz not null default now(),
+  unique (user_id, language)
+);
+
 alter table profiles add column if not exists languages text[] not null default '{}';
 alter table profiles add column if not exists active_language text;
 alter table user_vocab add column if not exists language text;
@@ -90,12 +99,16 @@ alter table surge_progress add column if not exists last_reviewed_at timestamptz
 alter table surge_progress add column if not exists next_review_at timestamptz;
 alter table surge_progress add column if not exists created_at timestamptz not null default now();
 alter table surge_progress add column if not exists updated_at timestamptz not null default now();
+alter table surge_sessions add column if not exists language text;
+alter table surge_sessions add column if not exists session_state jsonb not null default '{}'::jsonb;
+alter table surge_sessions add column if not exists updated_at timestamptz not null default now();
 
 alter table profiles enable row level security;
 alter table scenario_progress enable row level security;
 alter table scenario_attempts enable row level security;
 alter table user_vocab enable row level security;
 alter table surge_progress enable row level security;
+alter table surge_sessions enable row level security;
 
 create policy "Profiles are self readable"
   on profiles for select
@@ -155,4 +168,16 @@ create policy "Surge progress is self writable"
 
 create policy "Surge progress is self updatable"
   on surge_progress for update
+  using (auth.uid() = user_id);
+
+create policy "Surge sessions are self readable"
+  on surge_sessions for select
+  using (auth.uid() = user_id);
+
+create policy "Surge sessions are self writable"
+  on surge_sessions for insert
+  with check (auth.uid() = user_id);
+
+create policy "Surge sessions are self updatable"
+  on surge_sessions for update
   using (auth.uid() = user_id);

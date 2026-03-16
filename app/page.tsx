@@ -25,6 +25,7 @@ import {
   type SurgePhase,
   type SurgeProgressRecord,
   type SurgeSession,
+  type SurgeSessionSnapshot,
   type SurgeStatus,
 } from "../lib/surge";
 
@@ -243,6 +244,9 @@ export default function Home() {
   const pendingSurgeSyncRef = useRef<Record<string, SurgeProgressRecord>>({});
   const surgeSyncInFlightRef = useRef<boolean>(false);
   const surgeSyncRetryTimerRef = useRef<number | null>(null);
+  const pendingSurgeSessionSyncRef = useRef<SurgeSessionSnapshot | null>(null);
+  const surgeSessionSyncInFlightRef = useRef<boolean>(false);
+  const surgeSessionSyncRetryTimerRef = useRef<number | null>(null);
   const taskRef = useRef<string>("");
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef<boolean>(false);
@@ -340,6 +344,9 @@ export default function Home() {
     return () => {
       if (surgeSyncRetryTimerRef.current !== null) {
         window.clearTimeout(surgeSyncRetryTimerRef.current);
+      }
+      if (surgeSessionSyncRetryTimerRef.current !== null) {
+        window.clearTimeout(surgeSessionSyncRetryTimerRef.current);
       }
       if (audioRef.current) {
         audioRef.current.pause();
@@ -713,7 +720,12 @@ export default function Home() {
     if (!surgeSession || surgeSession.language !== language) {
       return;
     }
-    localStorage.setItem(SURGE_SESSION_KEY, JSON.stringify(surgeSession));
+    const snapshot: SurgeSessionSnapshot = {
+      session: surgeSession,
+      updatedAt: Date.now(),
+    };
+    localStorage.setItem(SURGE_SESSION_KEY, JSON.stringify(snapshot));
+    queueSurgeSessionSync(snapshot);
   }, [authLoading, language, surgeHydrated, surgeSession]);
 
   useEffect(() => {
@@ -750,6 +762,12 @@ export default function Home() {
   }, [authUser, language]);
 
   useEffect(() => {
+    if (!authUser || !language) return;
+    if (!pendingSurgeSessionSyncRef.current) return;
+    void flushPendingSurgeSession();
+  }, [authUser, language]);
+
+  useEffect(() => {
     let cancelled = false;
 
     const hydrateForLanguage = async () => {
@@ -761,7 +779,25 @@ export default function Home() {
         if (cancelled) return;
         const dbSurgeProgress = await loadSurgeProgress(language);
         if (cancelled) return;
-        setSurgeSession(restoreLocalSurgeSession(language, dbSurgeProgress));
+        const localSession = readLocalSurgeSessionSnapshot(language, dbSurgeProgress);
+        const serverSession = await loadSurgeSessionSnapshot(language, dbSurgeProgress);
+        if (cancelled) return;
+        const nextSession =
+          !serverSession
+            ? localSession
+            : !localSession
+              ? serverSession
+              : localSession.updatedAt >= serverSession.updatedAt
+                ? localSession
+                : serverSession;
+        if (
+          nextSession &&
+          localSession &&
+          (!serverSession || localSession.updatedAt > serverSession.updatedAt)
+        ) {
+          queueSurgeSessionSync(nextSession);
+        }
+        setSurgeSession(nextSession?.session ?? null);
         setSurgeHydrated(true);
         return;
       }
@@ -909,6 +945,8 @@ export default function Home() {
     if (authLoading) return;
     if (!authUser) {
       setSurgeHydrated(false);
+      pendingSurgeSyncRef.current = {};
+      pendingSurgeSessionSyncRef.current = null;
       setProgressMap({});
       setView("dashboard");
       setActiveScenario(null);
@@ -1288,118 +1326,171 @@ export default function Home() {
     );
   }
 
-  function restoreLocalSurgeSession(
+  function sanitizeStoredSurgeSession(
+    activeLanguage: string,
+    progressByKey: Record<string, SurgeProgressRecord>,
+    source: unknown
+  ) {
+    const parsed = source as Partial<SurgeSession>;
+    if (!parsed || typeof parsed !== "object" || parsed.language !== activeLanguage) {
+      return null;
+    }
+
+    const activeRound = sanitizeStoredSurgeItems(parsed.activeRound, progressByKey);
+    const reserve = sanitizeStoredSurgeItems(parsed.reserve, progressByKey);
+    const reviewQueue = sanitizeStoredSurgeItems(parsed.reviewQueue, progressByKey);
+    const typingQueue = sanitizeStoredSurgeItems(parsed.typingQueue, progressByKey);
+    const delayedReviewQueue = Array.isArray(parsed.delayedReviewQueue)
+      ? parsed.delayedReviewQueue
+          .filter((entry): entry is { item: SurgeItem; remainingSkips: number } => Boolean(entry) && typeof entry === "object")
+          .map((entry) => ({
+            item: sanitizeStoredSurgeItems([entry.item], progressByKey)[0],
+            remainingSkips: Number.isFinite(entry.remainingSkips) ? Math.max(0, Number(entry.remainingSkips)) : 0,
+          }))
+          .filter((entry) => entry.item)
+      : [];
+    const activeRoundKeys = new Set(activeRound.map((item) => item.itemKey));
+    const typingQueueKeys = new Set(typingQueue.map((item) => item.itemKey));
+    const phase: SurgePhase =
+      parsed.phase === "match" || parsed.phase === "typing" || parsed.phase === "preview" ? parsed.phase : "preview";
+
+    const restored: SurgeSession = {
+      ...createEmptySurgeSession(activeLanguage),
+      ...parsed,
+      language: activeLanguage,
+      phase,
+      activeRound,
+      reserve,
+      reviewQueue,
+      typingQueue,
+      delayedReviewQueue,
+      recentlySeen: Array.isArray(parsed.recentlySeen)
+        ? uniqueStrings(
+            parsed.recentlySeen.filter(
+              (itemKey): itemKey is string =>
+                typeof itemKey === "string" && progressByKey[itemKey]?.status !== "known"
+            )
+          ).slice(-120)
+        : [],
+      previewIndex: Math.min(
+        Number.isFinite(parsed.previewIndex) ? Math.max(0, Number(parsed.previewIndex)) : 0,
+        Math.max(activeRound.length - 1, 0)
+      ),
+      previewRevealed: Boolean(parsed.previewRevealed),
+      previewSeenKeys: Array.isArray(parsed.previewSeenKeys)
+        ? parsed.previewSeenKeys.filter((itemKey): itemKey is string => typeof itemKey === "string" && activeRoundKeys.has(itemKey))
+        : [],
+      matchTargets: Array.isArray(parsed.matchTargets)
+        ? parsed.matchTargets.filter((itemKey): itemKey is string => typeof itemKey === "string" && activeRoundKeys.has(itemKey))
+        : [],
+      matchTranslations: Array.isArray(parsed.matchTranslations)
+        ? parsed.matchTranslations.filter((itemKey): itemKey is string => typeof itemKey === "string" && activeRoundKeys.has(itemKey))
+        : [],
+      matchedKeys: Array.isArray(parsed.matchedKeys)
+        ? parsed.matchedKeys.filter((itemKey): itemKey is string => typeof itemKey === "string" && activeRoundKeys.has(itemKey))
+        : [],
+      selectedTargetKey:
+        typeof parsed.selectedTargetKey === "string" && activeRoundKeys.has(parsed.selectedTargetKey)
+          ? parsed.selectedTargetKey
+          : null,
+      selectedTranslationKey:
+        typeof parsed.selectedTranslationKey === "string" && activeRoundKeys.has(parsed.selectedTranslationKey)
+          ? parsed.selectedTranslationKey
+          : null,
+      typingInput: typeof parsed.typingInput === "string" ? parsed.typingInput : "",
+      typingDirection:
+        parsed.typingDirection === "english_to_target" || parsed.typingDirection === "target_to_english"
+          ? parsed.typingDirection
+          : typingQueue[0]
+            ? getDirectionForStage(progressByKey[typingQueue[0].itemKey]?.stage ?? 0)
+            : null,
+      typingHintCount: Number.isFinite(parsed.typingHintCount) ? Math.max(0, Number(parsed.typingHintCount)) : 0,
+      typingFeedback:
+        parsed.typingFeedback &&
+        (parsed.typingFeedback.status === "correct" || parsed.typingFeedback.status === "wrong") &&
+        (parsed.typingFeedback.direction === "target_to_english" || parsed.typingFeedback.direction === "english_to_target") &&
+        typeof parsed.typingFeedback.expected === "string" &&
+        typingQueueKeys.has(typingQueue[0]?.itemKey || "")
+          ? parsed.typingFeedback
+          : null,
+    };
+
+    const hasRecoverableState =
+      restored.activeRound.length ||
+      restored.reserve.length ||
+      restored.reviewQueue.length ||
+      restored.typingQueue.length ||
+      restored.delayedReviewQueue.length;
+
+    return hasRecoverableState ? restored : null;
+  }
+
+  function readLocalSurgeSessionSnapshot(
     activeLanguage: string,
     progressByKey: Record<string, SurgeProgressRecord>
-  ) {
+  ): SurgeSessionSnapshot | null {
     const savedSession = localStorage.getItem(SURGE_SESSION_KEY);
     if (!savedSession) {
       return null;
     }
 
     try {
-      const parsed = JSON.parse(savedSession) as Partial<SurgeSession>;
-      if (!parsed || parsed.language !== activeLanguage) {
+      const parsed = JSON.parse(savedSession) as Partial<SurgeSessionSnapshot> | Partial<SurgeSession>;
+      const snapshotSource =
+        parsed && typeof parsed === "object" && "session" in parsed ? parsed.session : parsed;
+      const restored = sanitizeStoredSurgeSession(activeLanguage, progressByKey, snapshotSource);
+      if (!restored) {
         localStorage.removeItem(SURGE_SESSION_KEY);
         return null;
       }
 
-      const activeRound = sanitizeStoredSurgeItems(parsed.activeRound, progressByKey);
-      const reserve = sanitizeStoredSurgeItems(parsed.reserve, progressByKey);
-      const reviewQueue = sanitizeStoredSurgeItems(parsed.reviewQueue, progressByKey);
-      const typingQueue = sanitizeStoredSurgeItems(parsed.typingQueue, progressByKey);
-      const delayedReviewQueue = Array.isArray(parsed.delayedReviewQueue)
-        ? parsed.delayedReviewQueue
-            .filter((entry): entry is { item: SurgeItem; remainingSkips: number } => Boolean(entry) && typeof entry === "object")
-            .map((entry) => ({
-              item: sanitizeStoredSurgeItems([entry.item], progressByKey)[0],
-              remainingSkips: Number.isFinite(entry.remainingSkips) ? Math.max(0, Number(entry.remainingSkips)) : 0,
-            }))
-            .filter((entry) => entry.item)
-        : [];
-      const activeRoundKeys = new Set(activeRound.map((item) => item.itemKey));
-      const typingQueueKeys = new Set(typingQueue.map((item) => item.itemKey));
-      const phase: SurgePhase =
-        parsed.phase === "match" || parsed.phase === "typing" || parsed.phase === "preview" ? parsed.phase : "preview";
+      const updatedAt =
+        parsed && typeof parsed === "object" && "updatedAt" in parsed && typeof parsed.updatedAt === "number"
+          ? parsed.updatedAt
+          : 0;
 
-      const restored: SurgeSession = {
-        ...createEmptySurgeSession(activeLanguage),
-        ...parsed,
-        language: activeLanguage,
-        phase,
-        activeRound,
-        reserve,
-        reviewQueue,
-        typingQueue,
-        delayedReviewQueue,
-        recentlySeen: Array.isArray(parsed.recentlySeen)
-          ? uniqueStrings(
-              parsed.recentlySeen.filter(
-                (itemKey): itemKey is string =>
-                  typeof itemKey === "string" && progressByKey[itemKey]?.status !== "known"
-              )
-            ).slice(-120)
-          : [],
-        previewIndex: Math.min(
-          Number.isFinite(parsed.previewIndex) ? Math.max(0, Number(parsed.previewIndex)) : 0,
-          Math.max(activeRound.length - 1, 0)
-        ),
-        previewRevealed: Boolean(parsed.previewRevealed),
-        previewSeenKeys: Array.isArray(parsed.previewSeenKeys)
-          ? parsed.previewSeenKeys.filter((itemKey): itemKey is string => typeof itemKey === "string" && activeRoundKeys.has(itemKey))
-          : [],
-        matchTargets: Array.isArray(parsed.matchTargets)
-          ? parsed.matchTargets.filter((itemKey): itemKey is string => typeof itemKey === "string" && activeRoundKeys.has(itemKey))
-          : [],
-        matchTranslations: Array.isArray(parsed.matchTranslations)
-          ? parsed.matchTranslations.filter((itemKey): itemKey is string => typeof itemKey === "string" && activeRoundKeys.has(itemKey))
-          : [],
-        matchedKeys: Array.isArray(parsed.matchedKeys)
-          ? parsed.matchedKeys.filter((itemKey): itemKey is string => typeof itemKey === "string" && activeRoundKeys.has(itemKey))
-          : [],
-        selectedTargetKey:
-          typeof parsed.selectedTargetKey === "string" && activeRoundKeys.has(parsed.selectedTargetKey)
-            ? parsed.selectedTargetKey
-            : null,
-        selectedTranslationKey:
-          typeof parsed.selectedTranslationKey === "string" && activeRoundKeys.has(parsed.selectedTranslationKey)
-            ? parsed.selectedTranslationKey
-            : null,
-        typingInput: typeof parsed.typingInput === "string" ? parsed.typingInput : "",
-        typingDirection:
-          parsed.typingDirection === "english_to_target" || parsed.typingDirection === "target_to_english"
-            ? parsed.typingDirection
-            : typingQueue[0]
-              ? getDirectionForStage(progressByKey[typingQueue[0].itemKey]?.stage ?? 0)
-              : null,
-        typingHintCount: Number.isFinite(parsed.typingHintCount) ? Math.max(0, Number(parsed.typingHintCount)) : 0,
-        typingFeedback:
-          parsed.typingFeedback &&
-          (parsed.typingFeedback.status === "correct" || parsed.typingFeedback.status === "wrong") &&
-          (parsed.typingFeedback.direction === "target_to_english" || parsed.typingFeedback.direction === "english_to_target") &&
-          typeof parsed.typingFeedback.expected === "string" &&
-          typingQueueKeys.has(typingQueue[0]?.itemKey || "")
-            ? parsed.typingFeedback
-            : null,
+      return {
+        session: restored,
+        updatedAt,
       };
-
-      const hasRecoverableState =
-        restored.activeRound.length ||
-        restored.reserve.length ||
-        restored.reviewQueue.length ||
-        restored.typingQueue.length ||
-        restored.delayedReviewQueue.length;
-
-      if (!hasRecoverableState) {
-        localStorage.removeItem(SURGE_SESSION_KEY);
-        return null;
-      }
-
-      return restored;
     } catch {
       localStorage.removeItem(SURGE_SESSION_KEY);
       return null;
     }
+  }
+
+  function restoreLocalSurgeSession(
+    activeLanguage: string,
+    progressByKey: Record<string, SurgeProgressRecord>
+  ) {
+    return readLocalSurgeSessionSnapshot(activeLanguage, progressByKey)?.session ?? null;
+  }
+
+  async function loadSurgeSessionSnapshot(
+    activeLanguage: string,
+    progressByKey: Record<string, SurgeProgressRecord>
+  ) {
+    if (!authUser) return null;
+    const { data, error } = await supabase
+      .from("surge_sessions")
+      .select("session_state, updated_at")
+      .eq("user_id", authUser.id)
+      .eq("language", activeLanguage)
+      .maybeSingle();
+
+    if (error || !data?.session_state) {
+      return null;
+    }
+
+    const session = sanitizeStoredSurgeSession(activeLanguage, progressByKey, data.session_state);
+    if (!session) {
+      return null;
+    }
+
+    return {
+      session,
+      updatedAt: data.updated_at ? Date.parse(data.updated_at) : 0,
+    } satisfies SurgeSessionSnapshot;
   }
 
   async function loadSurgeProgress(activeLanguage: string) {
@@ -1516,6 +1607,60 @@ export default function Home() {
       surgeSyncInFlightRef.current = false;
       if (!surgeSyncRetryTimerRef.current && Object.keys(pendingSurgeSyncRef.current).length) {
         void flushPendingSurgeProgress();
+      }
+    }
+  }
+
+  async function upsertSurgeSessionSnapshot(snapshot: SurgeSessionSnapshot) {
+    if (!authUser || !language) return;
+    await supabase.from("surge_sessions").upsert(
+      {
+        user_id: authUser.id,
+        language,
+        session_state: snapshot.session,
+        updated_at: new Date(snapshot.updatedAt).toISOString(),
+      },
+      {
+        onConflict: "user_id,language",
+      }
+    );
+  }
+
+  function queueSurgeSessionSync(snapshot: SurgeSessionSnapshot) {
+    if (!authUser || !language) return;
+    pendingSurgeSessionSyncRef.current = snapshot;
+    void flushPendingSurgeSession();
+  }
+
+  async function flushPendingSurgeSession() {
+    if (!authUser || !language || surgeSessionSyncInFlightRef.current || !pendingSurgeSessionSyncRef.current) {
+      return;
+    }
+
+    const snapshot = pendingSurgeSessionSyncRef.current;
+    surgeSessionSyncInFlightRef.current = true;
+    if (surgeSessionSyncRetryTimerRef.current !== null) {
+      window.clearTimeout(surgeSessionSyncRetryTimerRef.current);
+      surgeSessionSyncRetryTimerRef.current = null;
+    }
+
+    try {
+      await upsertSurgeSessionSnapshot(snapshot);
+      if (
+        pendingSurgeSessionSyncRef.current &&
+        pendingSurgeSessionSyncRef.current.updatedAt === snapshot.updatedAt
+      ) {
+        pendingSurgeSessionSyncRef.current = null;
+      }
+    } catch {
+      surgeSessionSyncRetryTimerRef.current = window.setTimeout(() => {
+        surgeSessionSyncRetryTimerRef.current = null;
+        void flushPendingSurgeSession();
+      }, 1200);
+    } finally {
+      surgeSessionSyncInFlightRef.current = false;
+      if (!surgeSessionSyncRetryTimerRef.current && pendingSurgeSessionSyncRef.current) {
+        void flushPendingSurgeSession();
       }
     }
   }

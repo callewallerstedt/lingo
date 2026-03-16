@@ -49,7 +49,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             "Never return a translation in the target language.",
             "Never return text and translation that mean the same written form.",
             supportList.length >= 8
-              ? "If you include a phrase or tiny sentence, build it only from words in the support vocabulary list or universally basic function words."
+              ? "If you include a phrase or tiny sentence, build it only from words in the support vocabulary list or universally basic function words, so the learner can actually understand how the sentence is built."
               : "If support vocabulary is small, prefer standalone words over phrases.",
             difficulty === "hard"
               ? "You may include slightly broader daily-life items, but keep them essential."
