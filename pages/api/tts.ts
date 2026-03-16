@@ -18,8 +18,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const audio = await callOpenAITTS({
-      input: text,
-      instructions: `Pronounce this ${language} flashcard clearly and naturally. Speak only the provided text.`,
+      input: `${text}\n${text}`,
+      instructions: [
+        `Speak this ${language} text exactly twice.`,
+        "Read the first line slowly, clearly, and learner-friendly.",
+        "Pause briefly.",
+        "Read the second line with natural local rhythm and speed.",
+        "Do not add any extra words or explanations.",
+      ].join(" "),
     });
 
     res.setHeader("Content-Type", "audio/mpeg");
