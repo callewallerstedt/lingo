@@ -131,11 +131,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         content: [
           {
             type: "text" as const,
-            text: [
-              roleStartPrompt(session),
-              "Keep it realistic and concise.",
-              `Use ${session.language} only.`,
-            ].join(" "),
+            text:
+              session.chatMode === "buddy"
+                ? [
+                    roleStartPrompt(session),
+                    "Keep it concise.",
+                    "Write the setup and coaching in English.",
+                    `Use ${session.language} only inside short practice items, sample answers, or tiny drills.`,
+                  ].join(" ")
+                : [
+                    roleStartPrompt(session),
+                    "Keep it realistic and concise.",
+                    `Use ${session.language} only.`,
+                  ].join(" "),
           },
         ],
       },

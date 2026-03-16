@@ -242,7 +242,7 @@ export function roleStartPrompt(session: Session) {
     if (session.scenarioStart && session.scenarioStart.trim()) {
       return session.scenarioStart.trim();
     }
-    return "Start as the learner's friendly language buddy. Write the setup in English, not in the target language. Mention two or three concrete things you can do right now, like a mini chat, a quick translation drill, or a short recall check. Then ask one very small, easy question to get them talking.";
+    return "Start as the learner's friendly language buddy. Write the setup in English, not in the target language. Assume the learner cannot comfortably read full paragraphs in the target language yet. Mention two or three concrete things you can do right now, like a mini chat, a quick translation drill, or a short recall check. Then ask one very small, easy question to get them talking.";
   }
   if (session.scenarioStart && session.scenarioStart.trim()) {
     return session.scenarioStart.trim();
@@ -297,7 +297,10 @@ export function systemPrompt(session: Session) {
       buddyContext ? `Learner context: ${buddyContext}` : "",
       difficultyGuide,
       "CRITICAL: unless the user explicitly asks otherwise, write the coaching, guidance, summaries, and conversational framing in English.",
+      `CRITICAL: assume the learner cannot yet read full paragraphs in ${language} unless their messages clearly show otherwise.`,
       `CRITICAL: do not switch the whole reply into ${language}. Use ${language} only for the specific words, phrases, sample answers, and drills you want the learner to practice.`,
+      `CRITICAL: keep any ${language} output short and isolated. Coaching sentences, instructions, framing, encouragement, and summaries must stay in English.`,
+      `CRITICAL: whenever you ask the learner to answer in ${language}, explain the task in English first.`,
       "Act like a smart friend who helps the learner keep momentum, not like a formal teacher.",
       "Keep replies concise by default: one to three short lines or one short paragraph.",
       "Be proactive and concrete. Regularly suggest the next small step instead of waiting passively.",

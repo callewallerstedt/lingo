@@ -121,6 +121,9 @@ export default function Home() {
   const [newLanguageInput, setNewLanguageInput] = useState<string>("");
   const [addLanguageOpen, setAddLanguageOpen] = useState<boolean>(false);
   const [theme, setTheme] = useState<ThemeMode>("dark");
+  const [isCompactViewport, setIsCompactViewport] = useState<boolean>(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+  const [mobileHeaderHidden, setMobileHeaderHidden] = useState<boolean>(false);
 
   const [language, setLanguage] = useState<string | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty>("easy");
@@ -210,6 +213,9 @@ export default function Home() {
   const chatModeRef = useRef<ChatMode>("scenario");
   const buddyProfileRef = useRef<BuddyProfileSnapshot | null>(null);
   const surgeProgressRef = useRef<Record<string, SurgeProgressRecord>>({});
+  const pendingSurgeSyncRef = useRef<Record<string, SurgeProgressRecord>>({});
+  const surgeSyncInFlightRef = useRef<boolean>(false);
+  const surgeSyncRetryTimerRef = useRef<number | null>(null);
   const taskRef = useRef<string>("");
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef<boolean>(false);
@@ -286,6 +292,9 @@ export default function Home() {
 
   useEffect(() => {
     return () => {
+      if (surgeSyncRetryTimerRef.current !== null) {
+        window.clearTimeout(surgeSyncRetryTimerRef.current);
+      }
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.src = "";
@@ -299,6 +308,53 @@ export default function Home() {
     localStorage.setItem("lingoarc_theme", theme);
     document.body.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 720px)");
+    const syncViewport = () => {
+      const compact = mediaQuery.matches;
+      setIsCompactViewport(compact);
+      if (!compact) {
+        setMobileMenuOpen(false);
+        setMobileHeaderHidden(false);
+      }
+    };
+
+    syncViewport();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", syncViewport);
+      return () => mediaQuery.removeEventListener("change", syncViewport);
+    }
+    mediaQuery.addListener(syncViewport);
+    return () => mediaQuery.removeListener(syncViewport);
+  }, []);
+
+  useEffect(() => {
+    if (!isCompactViewport) return;
+    let lastScrollY = window.scrollY;
+    const onScroll = () => {
+      const currentScrollY = window.scrollY;
+      if (mobileMenuOpen) {
+        setMobileHeaderHidden(false);
+        lastScrollY = currentScrollY;
+        return;
+      }
+      if (currentScrollY <= 24 || currentScrollY < lastScrollY - 8) {
+        setMobileHeaderHidden(false);
+      } else if (currentScrollY > lastScrollY + 8 && currentScrollY > 88) {
+        setMobileHeaderHidden(true);
+      }
+      lastScrollY = currentScrollY;
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [isCompactViewport, mobileMenuOpen]);
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+    setMobileHeaderHidden(false);
+  }, [authUser, isCompactViewport, language, view]);
 
   useEffect(() => {
     messagesStateRef.current = messages;
@@ -533,11 +589,12 @@ export default function Home() {
   useEffect(() => {
     if (authLoading || !surgeHydrated) return;
     if (!language) return;
+    if (authUser) return;
     localStorage.setItem(
       `${SURGE_PROGRESS_KEY_PREFIX}${language}`,
       JSON.stringify(surgeProgressMap)
     );
-  }, [authLoading, language, surgeHydrated, surgeProgressMap]);
+  }, [authLoading, authUser, language, surgeHydrated, surgeProgressMap]);
 
 
   useEffect(() => {
@@ -558,124 +615,102 @@ export default function Home() {
   }, [authUser, language, languageOptions]);
 
   useEffect(() => {
-    setSurgeHydrated(false);
-    if (authLoading || !language) return;
-    const savedSurgeProgress = localStorage.getItem(`${SURGE_PROGRESS_KEY_PREFIX}${language}`);
-    if (savedSurgeProgress) {
-      try {
-        const parsed = JSON.parse(savedSurgeProgress) as Record<string, SurgeProgressRecord>;
-        if (parsed && typeof parsed === "object") {
-          setSurgeProgressMap(parsed);
-        }
-      } catch {
-        setSurgeProgressMap({});
-      }
-    } else {
-      setSurgeProgressMap({});
-    }
+    if (!authUser || !language) return;
+    if (!Object.keys(pendingSurgeSyncRef.current).length) return;
+    void flushPendingSurgeProgress();
+  }, [authUser, language]);
 
-    if (authUser) {
-      void loadUserVocab(language);
-      void loadSurgeProgress(language);
-      const savedSession = localStorage.getItem(SURGE_SESSION_KEY);
-      if (!savedSession) {
-        setSurgeSession(null);
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateForLanguage = async () => {
+      setSurgeHydrated(false);
+      if (authLoading || !language) return;
+
+      if (authUser) {
+        await loadUserVocab(language);
+        if (cancelled) return;
+        const dbSurgeProgress = await loadSurgeProgress(language);
+        if (cancelled) return;
+        setSurgeSession(restoreLocalSurgeSession(language, dbSurgeProgress));
+        setSurgeHydrated(true);
+        return;
+      }
+
+      applySurgeProgressMap(readLocalSurgeProgress(language));
+      setSurgeSession(restoreLocalSurgeSession(language, readLocalSurgeProgress(language)));
+
+      const savedStudy = localStorage.getItem("lingoarc_study_pack");
+      if (!savedStudy) {
+        setStudyPack(null);
       } else {
         try {
-          const parsed = JSON.parse(savedSession) as SurgeSession;
+          const parsed = JSON.parse(savedStudy) as StudyPack;
           if (parsed && parsed.language === language) {
-            setSurgeSession({
-              ...createEmptySurgeSession(language),
-              ...parsed,
-              language,
-              activeRound: Array.isArray(parsed.activeRound) ? parsed.activeRound : [],
-              reserve: Array.isArray(parsed.reserve) ? parsed.reserve : [],
-              reviewQueue: Array.isArray(parsed.reviewQueue) ? parsed.reviewQueue : [],
-              typingQueue: Array.isArray(parsed.typingQueue) ? parsed.typingQueue : [],
-              delayedReviewQueue: Array.isArray(parsed.delayedReviewQueue) ? parsed.delayedReviewQueue : [],
-              recentlySeen: Array.isArray(parsed.recentlySeen) ? parsed.recentlySeen : [],
-              previewSeenKeys: Array.isArray(parsed.previewSeenKeys) ? parsed.previewSeenKeys : [],
-              matchTargets: Array.isArray(parsed.matchTargets) ? parsed.matchTargets : [],
-              matchTranslations: Array.isArray(parsed.matchTranslations) ? parsed.matchTranslations : [],
-              matchedKeys: Array.isArray(parsed.matchedKeys) ? parsed.matchedKeys : [],
-              typingHintCount: Number.isFinite(parsed.typingHintCount) ? Math.max(0, Number(parsed.typingHintCount)) : 0,
-            });
+            setStudyPack(parsed);
           } else {
-            localStorage.removeItem(SURGE_SESSION_KEY);
-            setSurgeSession(null);
+            setStudyPack(null);
           }
         } catch {
-          localStorage.removeItem(SURGE_SESSION_KEY);
-          setSurgeSession(null);
-        }
-      }
-      setSurgeHydrated(true);
-      return;
-    }
-    const savedStudy = localStorage.getItem("lingoarc_study_pack");
-    if (!savedStudy) {
-      setStudyPack(null);
-    } else {
-      try {
-        const parsed = JSON.parse(savedStudy) as StudyPack;
-        if (parsed && parsed.language === language) {
-          setStudyPack(parsed);
-        } else {
           setStudyPack(null);
         }
-      } catch {
-        setStudyPack(null);
       }
-    }
 
-    const savedScenarioVocab = localStorage.getItem("lingoarc_scenario_vocab");
-    if (!savedScenarioVocab) {
-      setScenarioVocabMap({});
-    } else {
+      const savedScenarioVocab = localStorage.getItem("lingoarc_scenario_vocab");
+      if (!savedScenarioVocab) {
+        setScenarioVocabMap({});
+      } else {
+        try {
+          const parsed = JSON.parse(savedScenarioVocab) as Record<string, StudyPack>;
+          if (parsed && typeof parsed === "object") {
+            const filtered: Record<string, StudyPack> = {};
+            Object.entries(parsed).forEach(([key, value]) => {
+              if (value?.language === language) {
+                const mergedEntries = mergeUniqueEntries([], value.entries || []).merged;
+                filtered[key] = {
+                  ...value,
+                  entries: mergedEntries,
+                  archived: mergedEntries.length ? mergedEntries.every((entry) => entry.archived) : false,
+                };
+              }
+            });
+            setScenarioVocabMap(filtered);
+          }
+        } catch {
+          setScenarioVocabMap({});
+        }
+      }
+
+      const savedTopicVocab = localStorage.getItem("lingoarc_topic_vocab");
+      if (!savedTopicVocab) {
+        setTopicVocabMap({});
+        setSurgeHydrated(true);
+        return;
+      }
       try {
-        const parsed = JSON.parse(savedScenarioVocab) as Record<string, StudyPack>;
+        const parsed = JSON.parse(savedTopicVocab) as Record<string, StudyPack>;
         if (parsed && typeof parsed === "object") {
           const filtered: Record<string, StudyPack> = {};
           Object.entries(parsed).forEach(([key, value]) => {
             if (value?.language === language) {
-              const mergedEntries = mergeUniqueEntries([], value.entries || []).merged;
               filtered[key] = {
                 ...value,
-                entries: mergedEntries,
-                archived: mergedEntries.length ? mergedEntries.every((entry) => entry.archived) : false,
+                entries: mergeUniqueEntries([], value.entries || []).merged,
               };
             }
           });
-          setScenarioVocabMap(filtered);
+          setTopicVocabMap(filtered);
         }
       } catch {
-        setScenarioVocabMap({});
+        setTopicVocabMap({});
       }
-    }
+      setSurgeHydrated(true);
+    };
 
-    const savedTopicVocab = localStorage.getItem("lingoarc_topic_vocab");
-    if (!savedTopicVocab) {
-      setTopicVocabMap({});
-      return;
-    }
-    try {
-      const parsed = JSON.parse(savedTopicVocab) as Record<string, StudyPack>;
-      if (parsed && typeof parsed === "object") {
-        const filtered: Record<string, StudyPack> = {};
-        Object.entries(parsed).forEach(([key, value]) => {
-          if (value?.language === language) {
-            filtered[key] = {
-              ...value,
-              entries: mergeUniqueEntries([], value.entries || []).merged,
-            };
-          }
-        });
-        setTopicVocabMap(filtered);
-      }
-    } catch {
-      setTopicVocabMap({});
-    }
-    setSurgeHydrated(true);
+    void hydrateForLanguage();
+    return () => {
+      cancelled = true;
+    };
   }, [authLoading, authUser, language]);
 
   useEffect(() => {
@@ -1016,8 +1051,171 @@ export default function Home() {
     setTopicVocabMap(dedupedTopicMap);
   }
 
+  function applySurgeProgressMap(nextMap: Record<string, SurgeProgressRecord>) {
+    surgeProgressRef.current = nextMap;
+    setSurgeProgressMap(nextMap);
+  }
+
+  function readLocalSurgeProgress(activeLanguage: string) {
+    const savedSurgeProgress = localStorage.getItem(`${SURGE_PROGRESS_KEY_PREFIX}${activeLanguage}`);
+    if (!savedSurgeProgress) {
+      return {};
+    }
+    try {
+      const parsed = JSON.parse(savedSurgeProgress) as Record<string, SurgeProgressRecord>;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function sanitizeStoredSurgeItems(
+    items: unknown,
+    progressByKey: Record<string, SurgeProgressRecord>
+  ): SurgeItem[] {
+    if (!Array.isArray(items)) return [];
+    return dedupeSurgeItems(
+      items
+        .filter((item): item is Partial<SurgeItem> => Boolean(item) && typeof item === "object")
+        .map((item) => {
+          const itemKey = typeof item.itemKey === "string" ? item.itemKey : "";
+          const progressRecord = itemKey ? progressByKey[itemKey] : null;
+          const nextText =
+            typeof item.text === "string" && item.text.trim()
+              ? item.text.trim()
+              : progressRecord?.itemText || "";
+          const nextTranslation =
+            typeof item.translation === "string" && item.translation.trim()
+              ? item.translation.trim()
+              : progressRecord?.translation || "";
+          const nextType = item.itemType === "phrase" ? "phrase" : progressRecord?.itemType === "phrase" ? "phrase" : "word";
+          return {
+            itemKey,
+            text: nextText,
+            translation: nextTranslation,
+            itemType: nextType as SurgeItem["itemType"],
+          };
+        })
+        .filter(
+          (item) =>
+            Boolean(item.itemKey) &&
+            Boolean(item.text) &&
+            Boolean(item.translation) &&
+            progressByKey[item.itemKey]?.status !== "known"
+        )
+    );
+  }
+
+  function restoreLocalSurgeSession(
+    activeLanguage: string,
+    progressByKey: Record<string, SurgeProgressRecord>
+  ) {
+    const savedSession = localStorage.getItem(SURGE_SESSION_KEY);
+    if (!savedSession) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(savedSession) as Partial<SurgeSession>;
+      if (!parsed || parsed.language !== activeLanguage) {
+        localStorage.removeItem(SURGE_SESSION_KEY);
+        return null;
+      }
+
+      const activeRound = sanitizeStoredSurgeItems(parsed.activeRound, progressByKey);
+      const reserve = sanitizeStoredSurgeItems(parsed.reserve, progressByKey);
+      const reviewQueue = sanitizeStoredSurgeItems(parsed.reviewQueue, progressByKey);
+      const typingQueue = sanitizeStoredSurgeItems(parsed.typingQueue, progressByKey);
+      const delayedReviewQueue = Array.isArray(parsed.delayedReviewQueue)
+        ? parsed.delayedReviewQueue
+            .filter((entry): entry is { item: SurgeItem; remainingSkips: number } => Boolean(entry) && typeof entry === "object")
+            .map((entry) => ({
+              item: sanitizeStoredSurgeItems([entry.item], progressByKey)[0],
+              remainingSkips: Number.isFinite(entry.remainingSkips) ? Math.max(0, Number(entry.remainingSkips)) : 0,
+            }))
+            .filter((entry) => entry.item)
+        : [];
+      const activeRoundKeys = new Set(activeRound.map((item) => item.itemKey));
+      const typingQueueKeys = new Set(typingQueue.map((item) => item.itemKey));
+      const phase: SurgePhase =
+        parsed.phase === "match" || parsed.phase === "typing" || parsed.phase === "preview" ? parsed.phase : "preview";
+
+      const restored: SurgeSession = {
+        ...createEmptySurgeSession(activeLanguage),
+        ...parsed,
+        language: activeLanguage,
+        phase,
+        activeRound,
+        reserve,
+        reviewQueue,
+        typingQueue,
+        delayedReviewQueue,
+        recentlySeen: Array.isArray(parsed.recentlySeen)
+          ? uniqueStrings(
+              parsed.recentlySeen.filter(
+                (itemKey): itemKey is string =>
+                  typeof itemKey === "string" && progressByKey[itemKey]?.status !== "known"
+              )
+            ).slice(-120)
+          : [],
+        previewIndex: Math.min(
+          Number.isFinite(parsed.previewIndex) ? Math.max(0, Number(parsed.previewIndex)) : 0,
+          Math.max(activeRound.length - 1, 0)
+        ),
+        previewRevealed: Boolean(parsed.previewRevealed),
+        previewSeenKeys: Array.isArray(parsed.previewSeenKeys)
+          ? parsed.previewSeenKeys.filter((itemKey): itemKey is string => typeof itemKey === "string" && activeRoundKeys.has(itemKey))
+          : [],
+        matchTargets: Array.isArray(parsed.matchTargets)
+          ? parsed.matchTargets.filter((itemKey): itemKey is string => typeof itemKey === "string" && activeRoundKeys.has(itemKey))
+          : [],
+        matchTranslations: Array.isArray(parsed.matchTranslations)
+          ? parsed.matchTranslations.filter((itemKey): itemKey is string => typeof itemKey === "string" && activeRoundKeys.has(itemKey))
+          : [],
+        matchedKeys: Array.isArray(parsed.matchedKeys)
+          ? parsed.matchedKeys.filter((itemKey): itemKey is string => typeof itemKey === "string" && activeRoundKeys.has(itemKey))
+          : [],
+        selectedTargetKey:
+          typeof parsed.selectedTargetKey === "string" && activeRoundKeys.has(parsed.selectedTargetKey)
+            ? parsed.selectedTargetKey
+            : null,
+        selectedTranslationKey:
+          typeof parsed.selectedTranslationKey === "string" && activeRoundKeys.has(parsed.selectedTranslationKey)
+            ? parsed.selectedTranslationKey
+            : null,
+        typingInput: typeof parsed.typingInput === "string" ? parsed.typingInput : "",
+        typingHintCount: Number.isFinite(parsed.typingHintCount) ? Math.max(0, Number(parsed.typingHintCount)) : 0,
+        typingFeedback:
+          parsed.typingFeedback &&
+          (parsed.typingFeedback.status === "correct" || parsed.typingFeedback.status === "wrong") &&
+          (parsed.typingFeedback.direction === "target_to_english" || parsed.typingFeedback.direction === "english_to_target") &&
+          typeof parsed.typingFeedback.expected === "string" &&
+          typingQueueKeys.has(typingQueue[0]?.itemKey || "")
+            ? parsed.typingFeedback
+            : null,
+      };
+
+      const hasRecoverableState =
+        restored.activeRound.length ||
+        restored.reserve.length ||
+        restored.reviewQueue.length ||
+        restored.typingQueue.length ||
+        restored.delayedReviewQueue.length;
+
+      if (!hasRecoverableState) {
+        localStorage.removeItem(SURGE_SESSION_KEY);
+        return null;
+      }
+
+      return restored;
+    } catch {
+      localStorage.removeItem(SURGE_SESSION_KEY);
+      return null;
+    }
+  }
+
   async function loadSurgeProgress(activeLanguage: string) {
-    if (!authUser) return;
+    if (!authUser) return {};
     const { data, error } = await supabase
       .from("surge_progress")
       .select(
@@ -1027,7 +1225,9 @@ export default function Home() {
       .eq("language", activeLanguage);
 
     if (error) {
-      return;
+      const fallback = readLocalSurgeProgress(activeLanguage);
+      applySurgeProgressMap(fallback);
+      return fallback;
     }
 
     const nextMap: Record<string, SurgeProgressRecord> = {};
@@ -1053,7 +1253,8 @@ export default function Home() {
         updatedAt: row.updated_at ? Date.parse(row.updated_at) : null,
       };
     });
-    setSurgeProgressMap(nextMap);
+    applySurgeProgressMap(nextMap);
+    return nextMap;
   }
 
   async function upsertSurgeProgress(records: SurgeProgressRecord[]) {
@@ -1079,6 +1280,51 @@ export default function Home() {
     await supabase.from("surge_progress").upsert(payload, {
       onConflict: "user_id,language,item_key",
     });
+  }
+
+  function queueSurgeProgressSync(records: SurgeProgressRecord[]) {
+    if (!authUser || !language || !records.length) return;
+    records.forEach((record) => {
+      pendingSurgeSyncRef.current[record.itemKey] = record;
+    });
+    void flushPendingSurgeProgress();
+  }
+
+  async function flushPendingSurgeProgress() {
+    if (!authUser || !language || surgeSyncInFlightRef.current) {
+      return;
+    }
+
+    const batch = Object.values(pendingSurgeSyncRef.current);
+    if (!batch.length) {
+      return;
+    }
+
+    surgeSyncInFlightRef.current = true;
+    if (surgeSyncRetryTimerRef.current !== null) {
+      window.clearTimeout(surgeSyncRetryTimerRef.current);
+      surgeSyncRetryTimerRef.current = null;
+    }
+
+    try {
+      await upsertSurgeProgress(batch);
+      batch.forEach((record) => {
+        const pending = pendingSurgeSyncRef.current[record.itemKey];
+        if (pending && pending.updatedAt === record.updatedAt) {
+          delete pendingSurgeSyncRef.current[record.itemKey];
+        }
+      });
+    } catch {
+      surgeSyncRetryTimerRef.current = window.setTimeout(() => {
+        surgeSyncRetryTimerRef.current = null;
+        void flushPendingSurgeProgress();
+      }, 1200);
+    } finally {
+      surgeSyncInFlightRef.current = false;
+      if (!surgeSyncRetryTimerRef.current && Object.keys(pendingSurgeSyncRef.current).length) {
+        void flushPendingSurgeProgress();
+      }
+    }
   }
 
   async function upsertUserVocab(rows: Array<{
@@ -2454,7 +2700,7 @@ export default function Home() {
       const nextMap = { ...currentMap, [item.itemKey]: nextRecord };
       surgeProgressRef.current = nextMap;
       setSurgeProgressMap(nextMap);
-      void upsertSurgeProgress([nextRecord]);
+      queueSurgeProgressSync([nextRecord]);
       setSurgeSavedAt(now);
     }
     return nextRecord;
@@ -3707,6 +3953,35 @@ export default function Home() {
     }
     return `Tell the learner they have practiced ${buddyProfileSnapshot.practicedWordCount} saved words, with ${buddyProfileSnapshot.masteredCount} stronger items and ${buddyProfileSnapshot.learningCount} still in progress. Recommend a focused buddy drill that targets weak items first.`;
   }, [buddyProfileSnapshot, language, topScenario]);
+  const dashboardPlanItems = useMemo(() => {
+    if (!language) {
+      return [
+        "Pick the language you want to train.",
+        "Start Surge to build a useful base of high-frequency words and short phrases.",
+        "Use Buddy or a scenario once you have a few basics to work with.",
+      ];
+    }
+    if (buddyProfileSnapshot.practicedWordCount < 12) {
+      return [
+        "Run a short Surge block and learn the next core items.",
+        "Repeat the due items until recall feels automatic.",
+        "Open Buddy after that for one tiny guided drill in English-first coaching.",
+      ];
+    }
+    if (buddyProfileSnapshot.dueCount > 0) {
+      return [
+        `Clear the ${buddyProfileSnapshot.dueCount} Surge reviews due now.`,
+        "Let Buddy recycle the same weak words in one short quiz.",
+        "Finish with one daily-life scenario to use them in context.",
+      ];
+    }
+    return [
+      "Open Buddy for active recall with your current weak words.",
+      "Do one daily-life scenario to use them in context.",
+      "Come back to Surge later for the next review wave.",
+    ];
+  }, [buddyProfileSnapshot, language]);
+  const dashboardTopicPreview = useMemo(() => topicList.slice(0, 3), [topicList]);
   const currentSurgePrompt = useMemo(() => getCurrentSurgePrompt(surgeSession), [surgeSession]);
   const studyVisibleItems = useMemo(() => {
     const entries = studyPack?.entries ?? [];
@@ -4799,10 +5074,22 @@ export default function Home() {
             <button
               type="button"
               className="solid"
-              onClick={() => void startBuddyChat(!buddyResumeAvailable)}
+              onClick={() => {
+                if (buddyRecommendation.action.includes("Surge")) {
+                  void startSurgeSession(!surgeSession);
+                  return;
+                }
+                if (buddyRecommendation.action.includes("scenario")) {
+                  if (nextScenario) {
+                    void startScenarioChat(nextScenario.scenario);
+                  }
+                  return;
+                }
+                void startBuddyChat(!buddyResumeAvailable);
+              }}
               disabled={!language}
             >
-              {buddyResumeAvailable ? "Continue Buddy" : "Open Buddy"}
+              {buddyRecommendation.action}
             </button>
             <button
               type="button"
@@ -4822,33 +5109,29 @@ export default function Home() {
             </button>
           </div>
         </div>
-        <div className="dashboard-hero-stats">
-          <div className="dashboard-stat-card">
-            <div className="dashboard-stat-label">Practiced words</div>
-            <div className="dashboard-stat-value">{buddyProfileSnapshot.practicedWordCount}</div>
-            <div className="dashboard-stat-note">Saved across vocab, Surge, and Buddy context</div>
+        <div className="dashboard-plan-card">
+          <div className="dashboard-section-kicker">Recommended now</div>
+          <h2>{buddyRecommendation.title}</h2>
+          <div className="dashboard-plan-list">
+            {dashboardPlanItems.map((item, index) => (
+              <div key={item} className="dashboard-plan-item">
+                <span className="dashboard-plan-step">{index + 1}</span>
+                <span>{item}</span>
+              </div>
+            ))}
           </div>
-          <div className="dashboard-stat-card">
-            <div className="dashboard-stat-label">Due now</div>
-            <div className="dashboard-stat-value">{surgeDueCount}</div>
-            <div className="dashboard-stat-note">Words ready for spaced review right now</div>
-          </div>
-          <div className="dashboard-stat-card">
-            <div className="dashboard-stat-label">Scenario reps</div>
-            <div className="dashboard-stat-value">{totalPoints()}</div>
-            <div className="dashboard-stat-note">
-              {topScenario?.count
-                ? `Best progress: ${topScenario.scenario.title} ${topScenario.count}/${TASKS_PER_SCENARIO}`
-                : "No scenarios completed yet"}
+          <div className="dashboard-mini-stats">
+            <div className="dashboard-stat-card">
+              <div className="dashboard-stat-label">Practiced</div>
+              <div className="dashboard-stat-value">{buddyProfileSnapshot.practicedWordCount}</div>
             </div>
-          </div>
-          <div className="dashboard-stat-card">
-            <div className="dashboard-stat-label">Buddy status</div>
-            <div className="dashboard-stat-value">{buddyResumeAvailable ? "Live" : "Fresh"}</div>
-            <div className="dashboard-stat-note">
-              {buddyResumeAvailable
-                ? "Buddy can resume with your saved context"
-                : "Buddy will build a plan from your progress"}
+            <div className="dashboard-stat-card">
+              <div className="dashboard-stat-label">Due</div>
+              <div className="dashboard-stat-value">{surgeDueCount}</div>
+            </div>
+            <div className="dashboard-stat-card">
+              <div className="dashboard-stat-label">Scenario reps</div>
+              <div className="dashboard-stat-value">{totalPoints()}</div>
             </div>
           </div>
         </div>
@@ -4858,8 +5141,8 @@ export default function Home() {
         <div className="dashboard-panel dashboard-recommend-panel">
           <div className="dashboard-panel-header">
             <div>
-              <div className="dashboard-section-kicker">Recommended next</div>
-              <h2>{buddyRecommendation.title}</h2>
+              <div className="dashboard-section-kicker">What the app thinks you should do</div>
+              <h2>Start with the clearest next move</h2>
             </div>
             <div className="dashboard-meta">
               {loadingProgress ? "Syncing progress" : `Tracking ${buddyProfileSnapshot.practicedWordCount} practiced items`}
@@ -4896,8 +5179,8 @@ export default function Home() {
         <div className="dashboard-panel dashboard-buddy-panel">
           <div className="dashboard-panel-header">
             <div>
-              <div className="dashboard-section-kicker">Buddy sees</div>
-              <h2>Your current learning state</h2>
+              <div className="dashboard-section-kicker">Saved progress</div>
+              <h2>Buddy's read on your level</h2>
             </div>
           </div>
           <div className="dashboard-buddy-list">
@@ -4914,22 +5197,17 @@ export default function Home() {
               <span className="dashboard-buddy-value">{buddyProfileSnapshot.recentCount}</span>
             </div>
           </div>
-          <div className="dashboard-buddy-preview">
-            {buddyProfileSnapshot.learningItems.slice(0, 4).map((item) => (
-              <span key={item} className="dashboard-inline-pill">{item}</span>
-            ))}
-            {!buddyProfileSnapshot.learningItems.length ? (
-              <span className="dashboard-inline-pill muted">No saved learning items yet</span>
-            ) : null}
-          </div>
+          <p className="dashboard-panel-copy">
+            Buddy coaches in English first, then uses your saved words, due Surge reviews, and recent practice to decide what to ask next.
+          </p>
         </div>
       </section>
 
       <section className="dashboard-section">
         <div className="dashboard-panel-header">
           <div>
-            <div className="dashboard-section-kicker">Practice paths</div>
-            <h2>Pick the kind of practice you want</h2>
+            <div className="dashboard-section-kicker">What you can do</div>
+            <h2>Pick one way to practice</h2>
           </div>
           <button type="button" className="ghost" onClick={() => setShowTopicModal(true)}>
             + New topic
@@ -4974,28 +5252,29 @@ export default function Home() {
             </div>
             <div className="dashboard-path-copy">Generate and review vocabulary tied to a specific real-life situation.</div>
           </button>
-          {topicList.slice(0, 2).map((topic) => {
-            const count = topicVocabMap[topic]?.entries.filter((entry) => !entry.archived).length || 0;
-            return (
-              <button
-                key={topic}
-                type="button"
-                className="dashboard-path-card"
-                onClick={() => {
-                  setActiveTopic(topic);
-                  setTopicVocabFlipped({});
-                  setView("topic-detail");
-                }}
-              >
-                <div className="dashboard-path-top">
-                  <div className="dashboard-path-title">{topic}</div>
-                  <div className="dashboard-path-badge">{count} saved</div>
-                </div>
-                <div className="dashboard-path-copy">Custom topic deck you can keep growing and revisiting.</div>
-              </button>
-            );
-          })}
         </div>
+        {dashboardTopicPreview.length ? (
+          <div className="dashboard-topic-strip">
+            {dashboardTopicPreview.map((topic) => {
+              const count = topicVocabMap[topic]?.entries.filter((entry) => !entry.archived).length || 0;
+              return (
+                <button
+                  key={topic}
+                  type="button"
+                  className="dashboard-topic-pill"
+                  onClick={() => {
+                    setActiveTopic(topic);
+                    setTopicVocabFlipped({});
+                    setView("topic-detail");
+                  }}
+                >
+                  <span>{topic}</span>
+                  <span>{count}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </section>
 
       <section className="dashboard-section">
@@ -5003,11 +5282,11 @@ export default function Home() {
           <div className="dashboard-panel-header">
             <div>
               <div className="dashboard-section-kicker">Scenarios</div>
-              <h2>Practice one category at a time</h2>
+              <h2>Use your words in real situations</h2>
               {!language ? (
                 <p className="dashboard-alert">Set a language above to start.</p>
               ) : (
-                <p className="dashboard-panel-copy">Use grouped scenes instead of one giant wall of cards.</p>
+                <p className="dashboard-panel-copy">Open one grouped category at a time instead of digging through one giant wall.</p>
               )}
             </div>
           </div>
@@ -5202,12 +5481,34 @@ export default function Home() {
 
   return (
     <div className="app-shell" onPointerDownCapture={handleAppPointerDownCapture}>
-      <header className="top-bar">
-        <div className="brand">
-          <button type="button" className="brand-button" onClick={() => setView("dashboard")}>
-            <span className="brand-name">NeoLingo</span>
-            <span className="brand-tag">Calm practice. Fast progress.</span>
-          </button>
+      <header
+        className={`top-bar${isCompactViewport ? " compact-header" : ""}${mobileMenuOpen ? " mobile-menu-open" : ""}${mobileHeaderHidden ? " mobile-hidden" : ""}`}
+      >
+        <div className="top-bar-main">
+          <div className="brand">
+            <button type="button" className="brand-button" onClick={() => setView("dashboard")}>
+              <span className="brand-name">NeoLingo</span>
+              <span className="brand-tag">Calm practice. Fast progress.</span>
+            </button>
+          </div>
+
+          {authUser && isCompactViewport ? (
+            <div className="mobile-header-actions">
+              <div className="mobile-header-summary">
+                <span>{language || "Choose language"}</span>
+                <span>{surgeDueCount} due</span>
+              </div>
+              <button
+                type="button"
+                className="ghost mobile-menu-toggle"
+                aria-expanded={mobileMenuOpen}
+                aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+                onClick={() => setMobileMenuOpen((current) => !current)}
+              >
+                {mobileMenuOpen ? "Close" : "Menu"}
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <div className="header-controls">
