@@ -295,6 +295,7 @@ export default function Home() {
   const speechPlaybackTokenRef = useRef<number>(0);
   const uiAudioContextRef = useRef<AudioContext | null>(null);
   const quickChatMessagesRef = useRef<HTMLDivElement | null>(null);
+  const quickChatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const quickChatShellRef = useRef<HTMLDivElement | null>(null);
   const quickChatPanelRef = useRef<HTMLElement | null>(null);
   const quickChatRecorderRef = useRef<MediaRecorder | null>(null);
@@ -1153,6 +1154,36 @@ export default function Home() {
       });
     });
   }, [quickChatMessages, quickChatLoading, quickChatOpen]);
+
+  useEffect(() => {
+    if (!quickChatOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) {
+        return;
+      }
+      const input = quickChatInputRef.current;
+      if (!input) return;
+      if (event.key.length !== 1 && event.key !== "Backspace") {
+        return;
+      }
+
+      event.preventDefault();
+      input.focus();
+
+      if (event.key === "Backspace") {
+        setQuickChatInput((current) => current.slice(0, -1));
+        return;
+      }
+
+      setQuickChatInput((current) => `${current}${event.key}`);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [quickChatOpen]);
 
   useEffect(() => {
     if (!quickChatOpen) return;
@@ -3302,6 +3333,17 @@ export default function Home() {
       startWidth: base.width,
       startHeight: base.height,
     };
+  }
+
+  function resetQuickChatConversation() {
+    setQuickChatMessages([]);
+    setQuickChatInput("");
+    if (language) {
+      localStorage.removeItem(`${QUICK_CHAT_STATE_KEY_PREFIX}${language}`);
+    }
+    window.requestAnimationFrame(() => {
+      quickChatInputRef.current?.focus();
+    });
   }
 
   function getSurgeHintDisplay(answer: string) {
@@ -7237,6 +7279,13 @@ export default function Home() {
             <button
               type="button"
               className="ghost quick-chat-header-btn"
+              onClick={resetQuickChatConversation}
+            >
+              New chat
+            </button>
+            <button
+              type="button"
+              className="ghost quick-chat-header-btn"
               onClick={toggleQuickChatSize}
             >
               {quickChatLarge ? "Small" : "Large"}
@@ -7259,7 +7308,7 @@ export default function Home() {
                   </div>
                 ) : (
                   <div key={message.id} className="quick-chat-row assistant">
-                    <div className={`quick-chat-card ${display.mode}`}>
+                    <div className={`quick-chat-card ${display.mode}${display.verdict ? "" : " compact"}`}>
                       {display.verdict ? (
                         <div className="quick-chat-meta">
                           <span className={`quick-chat-badge ${display.verdict}`}>{display.verdict}</span>
@@ -7296,6 +7345,7 @@ export default function Home() {
           </div>
           <div className="quick-chat-composer">
             <textarea
+              ref={quickChatInputRef}
               value={quickChatInput}
               onChange={(event) => setQuickChatInput(event.target.value)}
               onKeyDown={(event) => {

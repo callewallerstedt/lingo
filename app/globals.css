@@ -3434,7 +3434,7 @@ textarea {
 }
 
 .quick-chat-panel-actions > button:first-of-type {
-  margin-left: auto;
+  margin-right: auto;
 }
 
 .quick-chat-header-btn {
@@ -3478,6 +3478,11 @@ textarea {
   color: var(--ink);
 }
 
+.quick-chat-card.compact {
+  gap: 6px;
+  padding-top: 9px;
+}
+
 .quick-chat-card.translation,
 .quick-chat-card.correction,
 .quick-chat-card.tts {
@@ -3487,6 +3492,7 @@ textarea {
 .quick-chat-meta {
   display: flex;
   justify-content: flex-end;
+  margin-bottom: -2px;
 }
 
 .quick-chat-badge {
