@@ -3,6 +3,7 @@ export type SurgeStatus = "learning" | "known";
 export type SurgeDirection = "target_to_english" | "english_to_target";
 export type SurgeResult = "correct" | "wrong";
 export type SurgePhase = "preview" | "match" | "typing";
+export type SurgeModePreferences = Record<SurgePhase, boolean>;
 
 export type SurgeItem = {
   itemKey: string;
@@ -65,6 +66,12 @@ export type SurgeSession = {
 
 export const SURGE_SESSION_KEY = "lingoarc_surge_session";
 export const SURGE_PROGRESS_KEY_PREFIX = "lingoarc_surge_progress_";
+export const SURGE_MODE_KEY = "lingoarc_surge_modes";
+export const DEFAULT_SURGE_MODE_PREFERENCES: SurgeModePreferences = {
+  preview: true,
+  match: true,
+  typing: true,
+};
 
 export function createEmptySurgeSession(language: string): SurgeSession {
   return {
@@ -90,6 +97,25 @@ export function createEmptySurgeSession(language: string): SurgeSession {
     typingHintCount: 0,
     typingFeedback: null,
   };
+}
+
+export function normalizeSurgeModePreferences(value: unknown): SurgeModePreferences {
+  const fallback = { ...DEFAULT_SURGE_MODE_PREFERENCES };
+  if (!value || typeof value !== "object") {
+    return fallback;
+  }
+
+  const next: SurgeModePreferences = {
+    preview: Boolean((value as Partial<SurgeModePreferences>).preview),
+    match: Boolean((value as Partial<SurgeModePreferences>).match),
+    typing: Boolean((value as Partial<SurgeModePreferences>).typing),
+  };
+
+  if (!next.preview && !next.match && !next.typing) {
+    return fallback;
+  }
+
+  return next;
 }
 
 export function normalizeSurgeKey(value: string) {

@@ -6,6 +6,8 @@ import type { Difficulty } from "../lib/store";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { SCENARIOS, type ScenarioDefinition } from "../lib/scenarios";
 import {
+  DEFAULT_SURGE_MODE_PREFERENCES,
+  SURGE_MODE_KEY,
   SURGE_PROGRESS_KEY_PREFIX,
   SURGE_SESSION_KEY,
   createEmptySurgeSession,
@@ -14,10 +16,12 @@ import {
   getNextReviewAtForStage,
   normalizeSurgeAnswer,
   normalizeSurgeKey,
+  normalizeSurgeModePreferences,
   shuffleList,
   uniqueStrings,
   type SurgeDirection,
   type SurgeItem,
+  type SurgeModePreferences,
   type SurgePhase,
   type SurgeProgressRecord,
   type SurgeSession,
@@ -122,8 +126,20 @@ export default function Home() {
   const [addLanguageOpen, setAddLanguageOpen] = useState<boolean>(false);
   const [theme, setTheme] = useState<ThemeMode>("dark");
   const [isCompactViewport, setIsCompactViewport] = useState<boolean>(false);
+  const [isStandaloneApp, setIsStandaloneApp] = useState<boolean>(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [mobileHeaderHidden, setMobileHeaderHidden] = useState<boolean>(false);
+  const [mobileVocabTools, setMobileVocabTools] = useState<{
+    common: boolean;
+    scenario: boolean;
+    topic: boolean;
+    surge: boolean;
+  }>({
+    common: false,
+    scenario: false,
+    topic: false,
+    surge: false,
+  });
 
   const [language, setLanguage] = useState<string | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty>("easy");
@@ -201,6 +217,7 @@ export default function Home() {
   const [surgeSavedAt, setSurgeSavedAt] = useState<number>(0);
   const [surgeHydrated, setSurgeHydrated] = useState<boolean>(false);
   const [showSurgeMastered, setShowSurgeMastered] = useState<boolean>(false);
+  const [surgeModes, setSurgeModes] = useState<SurgeModePreferences>(DEFAULT_SURGE_MODE_PREFERENCES);
 
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -213,6 +230,7 @@ export default function Home() {
   const activeScenarioRef = useRef<ScenarioDefinition | null>(null);
   const chatModeRef = useRef<ChatMode>("scenario");
   const buddyProfileRef = useRef<BuddyProfileSnapshot | null>(null);
+  const surgeModesRef = useRef<SurgeModePreferences>(DEFAULT_SURGE_MODE_PREFERENCES);
   const surgeProgressRef = useRef<Record<string, SurgeProgressRecord>>({});
   const pendingSurgeSyncRef = useRef<Record<string, SurgeProgressRecord>>({});
   const surgeSyncInFlightRef = useRef<boolean>(false);
@@ -235,6 +253,7 @@ export default function Home() {
     const savedStudy = localStorage.getItem("lingoarc_study_pack");
     const savedScenarioVocab = localStorage.getItem("lingoarc_scenario_vocab");
     const savedTopicVocab = localStorage.getItem("lingoarc_topic_vocab");
+    const savedSurgeModes = localStorage.getItem(SURGE_MODE_KEY);
     const savedUsername = localStorage.getItem("lingoarc_username");
     const savedTheme = localStorage.getItem("lingoarc_theme");
     if (savedVocab) {
@@ -289,6 +308,13 @@ export default function Home() {
     if (savedTheme === "light" || savedTheme === "dark") {
       setTheme(savedTheme);
     }
+    if (savedSurgeModes) {
+      try {
+        setSurgeModes(normalizeSurgeModePreferences(JSON.parse(savedSurgeModes)));
+      } catch {
+        setSurgeModes(DEFAULT_SURGE_MODE_PREFERENCES);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -331,6 +357,24 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const mediaQuery = window.matchMedia("(display-mode: standalone)");
+    const syncStandalone = () => {
+      const iosStandalone = Boolean(
+        (window.navigator as Navigator & { standalone?: boolean }).standalone
+      );
+      setIsStandaloneApp(mediaQuery.matches || iosStandalone);
+    };
+
+    syncStandalone();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", syncStandalone);
+      return () => mediaQuery.removeEventListener("change", syncStandalone);
+    }
+    mediaQuery.addListener(syncStandalone);
+    return () => mediaQuery.removeListener(syncStandalone);
+  }, []);
+
+  useEffect(() => {
     if (!isCompactViewport) return;
     let lastScrollY = window.scrollY;
     const onScroll = () => {
@@ -355,6 +399,12 @@ export default function Home() {
   useEffect(() => {
     setMobileMenuOpen(false);
     setMobileHeaderHidden(false);
+    setMobileVocabTools({
+      common: false,
+      scenario: false,
+      topic: false,
+      surge: false,
+    });
   }, [authUser, isCompactViewport, language, view]);
 
   useEffect(() => {
@@ -506,8 +556,73 @@ export default function Home() {
   }, [buddyProfileSnapshot]);
 
   useEffect(() => {
+    surgeModesRef.current = surgeModes;
+    localStorage.setItem(SURGE_MODE_KEY, JSON.stringify(surgeModes));
+  }, [surgeModes]);
+
+  useEffect(() => {
     surgeProgressRef.current = surgeProgressMap;
   }, [surgeProgressMap]);
+
+  useEffect(() => {
+    if (!surgeSession || isSurgeModeEnabled(surgeSession.phase, surgeModes)) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const syncPhase = async () => {
+      if (!surgeSession) return;
+
+      if (surgeSession.phase === "preview") {
+        if (surgeModes.match) {
+          if (!cancelled) {
+            setSurgeSession(createMatchSession(surgeSession));
+          }
+          return;
+        }
+        if (surgeModes.typing) {
+          if (!cancelled) {
+            setSurgeSession(createTypingSession(surgeSession, surgeSession.activeRound));
+          }
+          return;
+        }
+      }
+
+      if (surgeSession.phase === "match") {
+        if (!cancelled) {
+          await completeSurgeMatchRound(surgeSession);
+        }
+        return;
+      }
+
+      const carryQueue = dedupeSurgeItems([
+        ...surgeSession.reviewQueue,
+        ...surgeSession.typingQueue,
+        ...surgeSession.delayedReviewQueue.map((entry) => entry.item),
+      ]).filter((item) => surgeProgressRef.current[item.itemKey]?.status !== "known");
+
+      const rebuilt = await buildNextSurgeRound({
+        ...surgeSession,
+        reviewQueue: carryQueue,
+        typingQueue: [],
+        delayedReviewQueue: [],
+        typingInput: "",
+        typingDirection: null,
+        typingHintCount: 0,
+        typingFeedback: null,
+      });
+
+      if (!cancelled) {
+        setSurgeSession(rebuilt);
+      }
+    };
+
+    void syncPhase();
+    return () => {
+      cancelled = true;
+    };
+  }, [surgeModes, surgeSession]);
 
   useEffect(() => {
     if (!language) {
@@ -2770,6 +2885,33 @@ export default function Home() {
       .map((record) => toSurgeItem(record));
   }
 
+  function isSurgeModeEnabled(phase: SurgePhase, preferences = surgeModesRef.current) {
+    return Boolean(preferences[phase]);
+  }
+
+  function toggleMobileVocabTools(panel: "common" | "scenario" | "topic" | "surge") {
+    setMobileVocabTools((current) => ({
+      common: false,
+      scenario: false,
+      topic: false,
+      surge: false,
+      [panel]: !current[panel],
+    }));
+  }
+
+  function toggleSurgeMode(phase: SurgePhase) {
+    setSurgeModes((current) => {
+      const enabledCount = Object.values(current).filter(Boolean).length;
+      if (current[phase] && enabledCount === 1) {
+        return current;
+      }
+      return {
+        ...current,
+        [phase]: !current[phase],
+      };
+    });
+  }
+
   function applyImmediateSurgeReplacement(session: SurgeSession) {
     if (session.phase !== "preview" || session.activeRound.length >= 5) {
       return session;
@@ -2939,6 +3081,22 @@ export default function Home() {
     };
   }
 
+  function initializeSurgePhaseForRound(session: SurgeSession, preferences = surgeModesRef.current) {
+    if (!session.activeRound.length) {
+      return session;
+    }
+    if (preferences.preview) {
+      return {
+        ...session,
+        phase: "preview" as const,
+      };
+    }
+    if (preferences.match) {
+      return createMatchSession(session);
+    }
+    return createTypingSession(session, session.activeRound);
+  }
+
   function createTypingSession(session: SurgeSession, queue: SurgeItem[]) {
     const dedupedQueue = dedupeSurgeItems(queue);
     return {
@@ -2978,13 +3136,14 @@ export default function Home() {
       },
       roundItems
     );
-    return {
+    const readySession = {
       ...filled,
       recentlySeen: uniqueStrings([
         ...filled.recentlySeen,
         ...filled.activeRound.map((item) => item.itemKey),
       ]).slice(-120),
     };
+    return initializeSurgePhaseForRound(readySession);
   }
 
   async function startSurgeSession(forceNew = false) {
@@ -3083,7 +3242,11 @@ export default function Home() {
       });
       return;
     }
-    setSurgeSession(createMatchSession(surgeSession));
+    if (isSurgeModeEnabled("match")) {
+      setSurgeSession(createMatchSession(surgeSession));
+      return;
+    }
+    await completeSurgeMatchRound(surgeSession);
   }
 
   async function markSurgeKnown(item: SurgeItem) {
@@ -3442,22 +3605,23 @@ export default function Home() {
     playUiClickThock();
   }
 
-  async function completeSurgeMatchRound() {
-    if (!surgeSession) return;
-    const nextReviewQueue = dedupeSurgeItems([...surgeSession.reviewQueue, ...surgeSession.activeRound]).filter(
+  async function completeSurgeMatchRound(sessionOverride?: SurgeSession) {
+    const sourceSession = sessionOverride ?? surgeSession;
+    if (!sourceSession) return;
+    const nextReviewQueue = dedupeSurgeItems([...sourceSession.reviewQueue, ...sourceSession.activeRound]).filter(
       (item) => surgeProgressMap[item.itemKey]?.status !== "known"
     );
-    const nextCycleCount = surgeSession.cycleCount + 1;
+    const nextCycleCount = sourceSession.cycleCount + 1;
     let nextSession: SurgeSession = {
-      ...surgeSession,
+      ...sourceSession,
       cycleCount: nextCycleCount,
-      reviewQueue: nextReviewQueue,
+      reviewQueue: isSurgeModeEnabled("typing") ? nextReviewQueue : [],
       selectedTargetKey: null,
       selectedTranslationKey: null,
-      matchedKeys: surgeSession.activeRound.map((item) => item.itemKey),
+      matchedKeys: sourceSession.activeRound.map((item) => item.itemKey),
     };
 
-    if (nextCycleCount % 2 === 0 && nextReviewQueue.length) {
+    if (isSurgeModeEnabled("typing") && nextCycleCount % 2 === 0 && nextReviewQueue.length) {
       nextSession = createTypingSession(nextSession, nextReviewQueue);
       nextSession.reviewQueue = [];
       setSurgeSession(nextSession);
@@ -3495,7 +3659,7 @@ export default function Home() {
       setSurgeSession(resolvedSession);
       if (completed) {
         window.setTimeout(() => {
-          void completeSurgeMatchRound();
+          void completeSurgeMatchRound(resolvedSession);
         }, 220);
       }
       return;
@@ -4157,10 +4321,8 @@ export default function Home() {
       <div className="surge-header">
         <div>
           <div className="surge-kicker">Surge</div>
-          <h2>Stay in flow and build recall fast.</h2>
-          <p>
-            Preview five items, match them, then bring older items back through active recall.
-          </p>
+          <h2>Fast active recall.</h2>
+          <p>Pick your loop and keep moving.</p>
         </div>
         <div className="surge-status">
           <div className="surge-status-pill">Due now {surgeDueCount}</div>
@@ -4172,8 +4334,45 @@ export default function Home() {
           >
             Mastered {surgeMasteredCount}
           </button>
+          {isCompactViewport ? (
+            <button
+              type="button"
+              className="surge-status-pill surge-status-action"
+              onClick={() => toggleMobileVocabTools("surge")}
+            >
+              {mobileVocabTools.surge ? "Hide options" : "Options"}
+            </button>
+          ) : null}
         </div>
       </div>
+
+      {!isCompactViewport || mobileVocabTools.surge ? (
+        <div className="surge-panel surge-options-panel">
+          <div className="surge-progress">
+            <span>Modes</span>
+            <span>{Object.values(surgeModes).filter(Boolean).length} active</span>
+          </div>
+          <div className="surge-mode-grid">
+            {(["preview", "match", "typing"] as SurgePhase[]).map((phase) => {
+              const label = phase === "preview" ? "Flashcards" : phase === "match" ? "Matching" : "Typing";
+              const enabledCount = Object.values(surgeModes).filter(Boolean).length;
+              const checked = surgeModes[phase];
+              const locked = checked && enabledCount === 1;
+              return (
+                <label key={phase} className={`surge-mode-toggle${checked ? " active" : ""}${locked ? " locked" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleSurgeMode(phase)}
+                    disabled={locked}
+                  />
+                  <span>{label}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       {!language ? (
         <div className="surge-panel">
@@ -4187,11 +4386,7 @@ export default function Home() {
         <div className="surge-panel surge-empty">
           <div>
             <h3>Ready for a fast vocab sprint?</h3>
-            <p>
-              {surgeError
-                ? surgeError
-                : "Surge mixes previews, matching, and spaced recall so you can keep moving without setup."}
-            </p>
+            <p>{surgeError ? surgeError : "Start with the modes you want."}</p>
           </div>
           <button type="button" className="solid" onClick={() => void startSurgeSession(true)}>
             {surgeError ? "Try again" : "Start Surge"}
@@ -4452,111 +4647,128 @@ export default function Home() {
           Back
         </button>
       </div>
-      <div className="vocab-tabs">
-        <button
-          type="button"
-          className={`vocab-tab-btn ${studyMode === "list" ? "active" : ""}`}
-          onClick={() => setStudyMode("list")}
-        >
-          List
-        </button>
-        <button
-          type="button"
-          className={`vocab-tab-btn ${studyMode === "cards" ? "active" : ""}`}
-          onClick={() => setStudyMode("cards")}
-        >
-          Flashcards
-        </button>
-      </div>
-      <div className="task-banner vocab-banner">
-        <div className="vocab-toolbar">
+      <div className="vocab-mobile-bar">
+        <div className="vocab-tabs">
           <button
             type="button"
-            className="ghost"
-            onClick={() => {
-              setStudyFront((prev) => (prev === "word" ? "translation" : "word"));
-              setStudyFlipped({});
-            }}
+            className={`vocab-tab-btn ${studyMode === "list" ? "active" : ""}`}
+            onClick={() => setStudyMode("list")}
           >
-            Start: {studyFront === "word" ? targetLabel : "English"}
+            List
           </button>
-          <div className="vocab-toolbar-divider" />
-          <div className="action-fab" aria-label="Generate words">
-            <button type="button" className="ghost action-fab-main">
-              Generate
-            </button>
-            <div className="action-fab-menu">
+          <button
+            type="button"
+            className={`vocab-tab-btn ${studyMode === "cards" ? "active" : ""}`}
+            onClick={() => setStudyMode("cards")}
+          >
+            Flashcards
+          </button>
+        </div>
+        {isCompactViewport ? (
+          <button
+            type="button"
+            className="ghost mobile-tools-toggle"
+            onClick={() => toggleMobileVocabTools("common")}
+          >
+            {mobileVocabTools.common ? "Hide tools" : "Tools"}
+          </button>
+        ) : null}
+      </div>
+      <div className="task-banner vocab-banner vocab-banner-compact">
+        <div className="task-label">Common words</div>
+        <div className="task-text">{studyVisibleItems.length} ready</div>
+        {!isCompactViewport || mobileVocabTools.common ? (
+          <div className="vocab-toolbar-wrap">
+            <div className="vocab-toolbar">
               <button
                 type="button"
-                className="ghost action-fab-item"
-                onClick={() => generateStudyWords(30)}
-                disabled={!language || studyLoading}
+                className="ghost"
+                onClick={() => {
+                  setStudyFront((prev) => (prev === "word" ? "translation" : "word"));
+                  setStudyFlipped({});
+                }}
               >
-                {studyLoading ? "Generating" : "Generate 30"}
+                Start: {studyFront === "word" ? targetLabel : "English"}
               </button>
-              <button
-                type="button"
-                className="ghost action-fab-item"
-                onClick={() => generateStudyWords(10)}
-                disabled={!language || studyLoading}
-              >
-                {studyLoading ? "Generating" : "Generate 10 more"}
+              <div className="vocab-toolbar-divider" />
+              <div className="action-fab" aria-label="Generate words">
+                <button type="button" className="ghost action-fab-main">
+                  Generate
+                </button>
+                <div className="action-fab-menu">
+                  <button
+                    type="button"
+                    className="ghost action-fab-item"
+                    onClick={() => generateStudyWords(30)}
+                    disabled={!language || studyLoading}
+                  >
+                    {studyLoading ? "Generating" : "Generate 30"}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost action-fab-item"
+                    onClick={() => generateStudyWords(10)}
+                    disabled={!language || studyLoading}
+                  >
+                    {studyLoading ? "Generating" : "Generate 10 more"}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost action-fab-item"
+                    onClick={() => generateStudyWords(10, "advanced")}
+                    disabled={!language || studyLoading}
+                  >
+                    {studyLoading ? "Generating" : "Important harder words"}
+                  </button>
+                </div>
+              </div>
+              <button type="button" className="ghost" onClick={() => void archiveCommonUnstarred()}>
+                Archive all but starred
               </button>
-              <button
-                type="button"
-                className="ghost action-fab-item"
-                onClick={() => generateStudyWords(10, "advanced")}
-                disabled={!language || studyLoading}
-              >
-                {studyLoading ? "Generating" : "Important harder words"}
+              <button type="button" className="ghost" onClick={clearStudy}>
+                Clear
               </button>
+              <div className="toolbar-right">
+                <button
+                  type="button"
+                  className={`toolbar-archive-toggle ${showStudyArchivedOnly ? "active" : ""}`}
+                  onClick={() => setShowStudyArchivedOnly((prev) => !prev)}
+                  aria-label={showStudyArchivedOnly ? "Show active words" : "Show archived words"}
+                  aria-pressed={showStudyArchivedOnly}
+                  title={showStudyArchivedOnly ? "Show active" : "Show archived"}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M4 7h16M6 7v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 7V5h6v2M9.5 12h5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  <span>Archived</span>
+                </button>
+                <button
+                  type="button"
+                  className={`toolbar-star-toggle ${showStudyStarredOnly ? "active" : ""}`}
+                  onClick={() => setShowStudyStarredOnly((prev) => !prev)}
+                  aria-label={showStudyStarredOnly ? "Show all words" : "Show starred only"}
+                  aria-pressed={showStudyStarredOnly}
+                  title={showStudyStarredOnly ? "Show all" : "Show starred only"}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
+                      fill="currentColor"
+                    />
+                  </svg>
+                  <span>Starred</span>
+                </button>
+              </div>
             </div>
           </div>
-          <button type="button" className="ghost" onClick={() => void archiveCommonUnstarred()}>
-            Archive all but starred
-          </button>
-          <button type="button" className="ghost" onClick={clearStudy}>
-            Clear
-          </button>
-          <div className="toolbar-right">
-            <button
-              type="button"
-              className={`toolbar-archive-toggle ${showStudyArchivedOnly ? "active" : ""}`}
-              onClick={() => setShowStudyArchivedOnly((prev) => !prev)}
-              aria-label={showStudyArchivedOnly ? "Show active words" : "Show archived words"}
-              aria-pressed={showStudyArchivedOnly}
-              title={showStudyArchivedOnly ? "Show active" : "Show archived"}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M4 7h16M6 7v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 7V5h6v2M9.5 12h5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              <span>Archived</span>
-            </button>
-            <button
-              type="button"
-              className={`toolbar-star-toggle ${showStudyStarredOnly ? "active" : ""}`}
-              onClick={() => setShowStudyStarredOnly((prev) => !prev)}
-              aria-label={showStudyStarredOnly ? "Show all words" : "Show starred only"}
-              aria-pressed={showStudyStarredOnly}
-              title={showStudyStarredOnly ? "Show all" : "Show starred only"}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M12 3.5l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6L3.27 9.85l6.03-.88L12 3.5z"
-                  fill="currentColor"
-                />
-              </svg>
-              <span>Starred</span>
-            </button>
-          </div>
-        </div>
+        ) : null}
       </div>
       {!language ? (
         <p className="dashboard-alert">Set a language above to generate vocabulary.</p>
@@ -4761,6 +4973,15 @@ export default function Home() {
           <div className="chat-title-main">{activeScenarioVocab.title} vocabulary</div>
           <div className="chat-title-sub">{activeScenarioVocab.subtitle}</div>
         </div>
+        {isCompactViewport ? (
+          <button
+            type="button"
+            className="ghost mobile-tools-toggle"
+            onClick={() => toggleMobileVocabTools("scenario")}
+          >
+            {mobileVocabTools.scenario ? "Hide tools" : "Tools"}
+          </button>
+        ) : null}
       </div>
       <div className="task-banner vocab-banner">
         <div className="task-label">Scenario words</div>
@@ -4769,34 +4990,36 @@ export default function Home() {
             ? `${scenarioVocabMap[activeScenarioVocab.id].entries.filter((entry) => !entry.archived).length} words ready`
             : "Generate a list to begin."}
         </div>
-        <div className="home-vocab-actions">
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => generateScenarioWords(20, activeScenarioVocab)}
-            disabled={!language || scenarioVocabLoading}
-          >
-            {scenarioVocabLoading ? "Generating" : "Generate 20"}
-          </button>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => generateScenarioWords(10, activeScenarioVocab)}
-            disabled={!language || scenarioVocabLoading}
-          >
-            {scenarioVocabLoading ? "Generating" : "Generate 10 more"}
-          </button>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => void archiveScenarioVocabUnstarred(activeScenarioVocab.id)}
-          >
-            Archive all but starred
-          </button>
-          <button type="button" className="ghost" onClick={clearScenarioVocab}>
-            Clear
-          </button>
-        </div>
+        {!isCompactViewport || mobileVocabTools.scenario ? (
+          <div className="home-vocab-actions">
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => generateScenarioWords(20, activeScenarioVocab)}
+              disabled={!language || scenarioVocabLoading}
+            >
+              {scenarioVocabLoading ? "Generating" : "Generate 20"}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => generateScenarioWords(10, activeScenarioVocab)}
+              disabled={!language || scenarioVocabLoading}
+            >
+              {scenarioVocabLoading ? "Generating" : "Generate 10 more"}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => void archiveScenarioVocabUnstarred(activeScenarioVocab.id)}
+            >
+              Archive all but starred
+            </button>
+            <button type="button" className="ghost" onClick={clearScenarioVocab}>
+              Clear
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="home-vocab-controls">
         <div className="segmented">
@@ -4815,23 +5038,27 @@ export default function Home() {
             Flashcards
           </button>
         </div>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => {
-            setScenarioVocabFront((prev) => (prev === "word" ? "translation" : "word"));
-            setScenarioVocabFlipped({});
-          }}
-        >
-          Start: {scenarioVocabFront === "word" ? targetLabel : "English"}
-        </button>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => setShowScenarioStarredOnly((prev) => !prev)}
-        >
-          {showScenarioStarredOnly ? "Show all" : "Starred only"}
-        </button>
+        {!isCompactViewport || mobileVocabTools.scenario ? (
+          <>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setScenarioVocabFront((prev) => (prev === "word" ? "translation" : "word"));
+                setScenarioVocabFlipped({});
+              }}
+            >
+              Start: {scenarioVocabFront === "word" ? targetLabel : "English"}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setShowScenarioStarredOnly((prev) => !prev)}
+            >
+              {showScenarioStarredOnly ? "Show all" : "Starred only"}
+            </button>
+          </>
+        ) : null}
       </div>
       {!language ? (
         <p className="dashboard-alert">Set a language above to generate vocabulary.</p>
@@ -5015,6 +5242,15 @@ export default function Home() {
           <div className="chat-title-main">{activeTopic} vocabulary</div>
           <div className="chat-title-sub">Custom topic words.</div>
         </div>
+        {isCompactViewport ? (
+          <button
+            type="button"
+            className="ghost mobile-tools-toggle"
+            onClick={() => toggleMobileVocabTools("topic")}
+          >
+            {mobileVocabTools.topic ? "Hide tools" : "Tools"}
+          </button>
+        ) : null}
       </div>
       <div className="task-banner vocab-banner">
         <div className="task-label">Topic list</div>
@@ -5023,34 +5259,36 @@ export default function Home() {
             ? `${topicVocabMap[activeTopic].entries.filter((entry) => !entry.archived).length} words ready`
             : "Generate a list to begin."}
         </div>
-        <div className="home-vocab-actions">
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => generateTopicWords(20, activeTopic)}
-            disabled={!language || topicVocabLoading}
-          >
-            {topicVocabLoading ? "Generating" : "Generate 20"}
-          </button>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => generateTopicWords(10, activeTopic)}
-            disabled={!language || topicVocabLoading}
-          >
-            {topicVocabLoading ? "Generating" : "Generate 10 more"}
-          </button>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => void archiveTopicUnstarred(activeTopic)}
-          >
-            Archive all but starred
-          </button>
-          <button type="button" className="ghost" onClick={clearTopicVocab}>
-            Clear
-          </button>
-        </div>
+        {!isCompactViewport || mobileVocabTools.topic ? (
+          <div className="home-vocab-actions">
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => generateTopicWords(20, activeTopic)}
+              disabled={!language || topicVocabLoading}
+            >
+              {topicVocabLoading ? "Generating" : "Generate 20"}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => generateTopicWords(10, activeTopic)}
+              disabled={!language || topicVocabLoading}
+            >
+              {topicVocabLoading ? "Generating" : "Generate 10 more"}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => void archiveTopicUnstarred(activeTopic)}
+            >
+              Archive all but starred
+            </button>
+            <button type="button" className="ghost" onClick={clearTopicVocab}>
+              Clear
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="home-vocab-controls">
         <div className="segmented">
@@ -5069,23 +5307,27 @@ export default function Home() {
             Flashcards
           </button>
         </div>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => {
-            setTopicVocabFront((prev) => (prev === "word" ? "translation" : "word"));
-            setTopicVocabFlipped({});
-          }}
-        >
-          Start: {topicVocabFront === "word" ? targetLabel : "English"}
-        </button>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => setShowTopicStarredOnly((prev) => !prev)}
-        >
-          {showTopicStarredOnly ? "Show all" : "Starred only"}
-        </button>
+        {!isCompactViewport || mobileVocabTools.topic ? (
+          <>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setTopicVocabFront((prev) => (prev === "word" ? "translation" : "word"));
+                setTopicVocabFlipped({});
+              }}
+            >
+              Start: {topicVocabFront === "word" ? targetLabel : "English"}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setShowTopicStarredOnly((prev) => !prev)}
+            >
+              {showTopicStarredOnly ? "Show all" : "Starred only"}
+            </button>
+          </>
+        ) : null}
       </div>
       {!language ? (
         <p className="dashboard-alert">Set a language above to generate vocabulary.</p>
@@ -5661,7 +5903,11 @@ export default function Home() {
   );
 
   return (
-    <div className="app-shell" onPointerDownCapture={handleAppPointerDownCapture}>
+    <div
+      className={`app-shell${isStandaloneApp ? " standalone-app" : ""}`}
+      onPointerDownCapture={handleAppPointerDownCapture}
+    >
+      {!isStandaloneApp ? (
       <header
         className={`top-bar${isCompactViewport ? " compact-header" : ""}${mobileMenuOpen ? " mobile-menu-open" : ""}${mobileHeaderHidden ? " mobile-hidden" : ""}`}
       >
@@ -5804,6 +6050,7 @@ export default function Home() {
           ) : null}
         </div>
       </header>
+      ) : null}
 
       <main className="main-area">
         {authLoading ? (

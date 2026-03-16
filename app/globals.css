@@ -1722,6 +1722,14 @@ body {
   border: 1px solid var(--glass-border);
 }
 
+.vocab-mobile-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .vocab-tab-btn {
   border: none;
   background: transparent;
@@ -1761,6 +1769,15 @@ body {
   gap: 12px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.mobile-tools-toggle {
+  min-width: 96px;
+}
+
+.vocab-toolbar-wrap {
+  display: grid;
+  gap: 10px;
 }
 
 .vocab-toolbar {
@@ -2305,6 +2322,10 @@ body {
 
 .app-shell {
   background: transparent;
+}
+
+.app-shell.standalone-app .main-area {
+  padding-top: max(14px, env(safe-area-inset-top));
 }
 
 .top-bar {
@@ -2893,7 +2914,7 @@ textarea {
   }
 
   .vocab-cards {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    grid-template-columns: 1fr;
   }
 
   .vocab-card-wrap,
@@ -2909,6 +2930,99 @@ textarea {
   .home-vocab,
   .auth-panel {
     padding: 12px;
+  }
+
+  .vocab-mobile-bar {
+    align-items: stretch;
+  }
+
+  .vocab-mobile-bar .vocab-tabs,
+  .vocab-mobile-bar .mobile-tools-toggle {
+    width: 100%;
+  }
+
+  .vocab-mobile-bar .vocab-tabs {
+    justify-content: space-between;
+  }
+
+  .vocab-mobile-bar .vocab-tab-btn {
+    flex: 1 1 0;
+  }
+
+  .task-banner.vocab-banner,
+  .home-vocab-controls {
+    gap: 10px;
+  }
+
+  .vocab-toolbar,
+  .home-vocab-controls {
+    display: grid;
+    width: 100%;
+  }
+
+  .vocab-toolbar {
+    gap: 8px;
+  }
+
+  .vocab-toolbar-divider {
+    display: none;
+  }
+
+  .toolbar-right {
+    margin-left: 0;
+    width: 100%;
+    justify-content: stretch;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .toolbar-right button,
+  .home-vocab-controls > button,
+  .home-vocab-controls .segmented,
+  .vocab-toolbar .ghost,
+  .action-fab,
+  .action-fab-main {
+    width: 100%;
+  }
+
+  .action-fab-menu {
+    left: 0;
+    right: 0;
+    transform: translate(0, 0) scale(0.96);
+  }
+
+  .action-fab:hover .action-fab-menu,
+  .action-fab:focus-within .action-fab-menu {
+    transform: translate(0, 0) scale(1);
+  }
+
+  .vocab-card {
+    min-height: 220px;
+    padding: 14px;
+  }
+
+  .vocab-card-actions {
+    top: 10px;
+    right: 10px;
+    gap: 6px;
+  }
+
+  .vocab-card-icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .vocab-card-face {
+    padding-top: 28px;
+  }
+
+  .vocab-card-word,
+  .vocab-cards .vocab-card-translation {
+    font-size: clamp(28px, 8vw, 38px);
+  }
+
+  .vocab-card-translation {
+    font-size: clamp(24px, 7vw, 34px);
   }
 }
 
@@ -2984,6 +3098,42 @@ textarea {
   display: grid;
   gap: 14px;
   min-height: 58vh;
+}
+
+.surge-options-panel {
+  min-height: 0;
+  gap: 12px;
+}
+
+.surge-mode-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.surge-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.surge-mode-toggle input {
+  margin: 0;
+}
+
+.surge-mode-toggle.active {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface-2) 76%, var(--card-highlight) 24%);
+  box-shadow: 0 0 0 1px rgba(255, 208, 84, 0.12);
+}
+
+.surge-mode-toggle.locked {
+  opacity: 0.72;
 }
 
 .surge-empty {
@@ -3254,6 +3404,30 @@ textarea {
   .surge-card,
   .surge-prompt-card {
     padding: 18px 14px;
-    min-height: 250px;
+    min-height: 220px;
+  }
+
+  .surge-mode-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .surge-match-card {
+    min-height: 56px;
+    padding: 12px;
+  }
+
+  .surge-progress {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+  }
+
+  .surge-card-translation,
+  .surge-prompt-text {
+    font-size: clamp(24px, 8vw, 34px);
+  }
+
+  .surge-card-word {
+    font-size: clamp(20px, 7vw, 28px);
   }
 }
