@@ -138,7 +138,10 @@ export function normalizeSurgeAnswer(value: string, mode: "target" | "english") 
     .toLocaleLowerCase()
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\p{L}\p{N}' -]/gu, " ")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/[’']/g, "")
+    .replace(/\s*\/\s*/g, "/")
+    .replace(/[^\p{L}\p{N}/ -]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -150,6 +153,38 @@ export function normalizeSurgeAnswer(value: string, mode: "target" | "english") 
   }
 
   return normalized;
+}
+
+export function getSurgeAnswerVariants(value: string, mode: "target" | "english") {
+  const normalized = normalizeSurgeAnswer(value, mode);
+  if (!normalized) {
+    return [""];
+  }
+
+  const tokens = normalized.split(" ").filter(Boolean);
+  const variants = tokens.reduce<string[]>((current, token) => {
+    const options = token.includes("/") ? token.split("/").filter(Boolean) : [token];
+    if (!options.length) {
+      return current;
+    }
+    return current.flatMap((prefix) =>
+      options.map((option) => `${prefix} ${option}`.trim())
+    );
+  }, [""]);
+
+  return uniqueStrings(variants.filter(Boolean));
+}
+
+export function matchesSurgeAnswer(
+  submitted: string,
+  expected: string,
+  mode: "target" | "english"
+) {
+  const normalizedSubmitted = normalizeSurgeAnswer(submitted, mode);
+  if (!normalizedSubmitted) {
+    return false;
+  }
+  return getSurgeAnswerVariants(expected, mode).includes(normalizedSubmitted);
 }
 
 export function getDirectionForStage(stage: number): SurgeDirection {

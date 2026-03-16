@@ -28,6 +28,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const cleaned = audioBase64.includes(",") ? audioBase64.split(",").pop() || "" : audioBase64;
     const audioBuffer = Buffer.from(cleaned, "base64");
+    if (!audioBuffer.length) {
+      res.status(400).json({ error: "Missing recorded audio" });
+      return;
+    }
     const text = await callOpenAITranscription({
       audioBuffer,
       mimeType,
@@ -38,6 +42,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.status(200).json({ text });
   } catch (error) {
     console.error("Transcription failed:", error);
-    res.status(500).json({ error: "Failed to transcribe audio" });
+    res.status(500).json({
+      error: error instanceof Error && error.message.trim() ? error.message.trim() : "Failed to transcribe audio",
+    });
   }
 }

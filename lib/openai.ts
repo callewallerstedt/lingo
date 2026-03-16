@@ -189,20 +189,24 @@ export async function callOpenAITranscription({
   }
 
   const formData = new FormData();
+  const normalizedMimeType = (mimeType || "audio/webm").split(";")[0].trim().toLowerCase();
   const extension =
-    mimeType === "audio/mp4" || mimeType === "audio/m4a"
+    normalizedMimeType === "audio/mp4" || normalizedMimeType === "audio/m4a" || normalizedMimeType === "audio/x-m4a"
       ? "m4a"
-      : mimeType === "audio/ogg"
+      : normalizedMimeType === "audio/ogg"
         ? "ogg"
-        : mimeType === "audio/wav"
+        : normalizedMimeType === "audio/wav" || normalizedMimeType === "audio/x-wav"
           ? "wav"
+          : normalizedMimeType === "audio/mpeg" || normalizedMimeType === "audio/mp3"
+            ? "mp3"
           : "webm";
-  const file = new File([audioBuffer], `recording.${extension}`, {
-    type: mimeType || "audio/webm",
+  const blob = new Blob([audioBuffer], {
+    type: normalizedMimeType || "audio/webm",
   });
 
-  formData.append("file", file);
+  formData.append("file", blob, `recording.${extension}`);
   formData.append("model", TRANSCRIBE_MODEL);
+  formData.append("response_format", "json");
   if (language) {
     formData.append("language", language);
   }

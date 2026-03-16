@@ -14,6 +14,7 @@ import {
   dedupeSurgeItems,
   getDirectionForStage,
   getNextReviewAtForStage,
+  matchesSurgeAnswer,
   normalizeSurgeAnswer,
   normalizeSurgeKey,
   normalizeSurgeModePreferences,
@@ -32,6 +33,14 @@ import {
 const TASKS_PER_SCENARIO = 10;
 const BUDDY_STATE_KEY_PREFIX = "lingoarc_buddy_state_";
 const QUICK_CHAT_STATE_KEY_PREFIX = "lingoarc_quick_chat_";
+const QUICK_CHAT_LAYOUT_KEY = "lingoarc_quick_chat_layout";
+
+type QuickChatLayout = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
 
 type Role = "user" | "assistant";
 
@@ -248,8 +257,9 @@ export default function Home() {
   const [surgeHydrated, setSurgeHydrated] = useState<boolean>(false);
   const [showSurgeMastered, setShowSurgeMastered] = useState<boolean>(false);
   const [surgeModes, setSurgeModes] = useState<SurgeModePreferences>(DEFAULT_SURGE_MODE_PREFERENCES);
-  const [quickChatOpen, setQuickChatOpen] = useState<boolean>(false);
-  const [quickChatLarge, setQuickChatLarge] = useState<boolean>(false);
+  const [quickChatOpen, setQuickChatOpen] = useState<boolean>(true);
+  const [quickChatLarge, setQuickChatLarge] = useState<boolean>(true);
+  const [quickChatLayout, setQuickChatLayout] = useState<QuickChatLayout | null>(null);
   const [quickChatInput, setQuickChatInput] = useState<string>("");
   const [quickChatMessages, setQuickChatMessages] = useState<QuickChatMessage[]>([]);
   const [quickChatLoading, setQuickChatLoading] = useState<boolean>(false);
@@ -285,8 +295,17 @@ export default function Home() {
   const speechPlaybackTokenRef = useRef<number>(0);
   const uiAudioContextRef = useRef<AudioContext | null>(null);
   const quickChatMessagesRef = useRef<HTMLDivElement | null>(null);
+  const quickChatShellRef = useRef<HTMLDivElement | null>(null);
+  const quickChatPanelRef = useRef<HTMLElement | null>(null);
   const quickChatRecorderRef = useRef<MediaRecorder | null>(null);
   const quickChatChunksRef = useRef<Blob[]>([]);
+  const quickChatDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startLeft: number;
+    startTop: number;
+  } | null>(null);
 
   const clientCache = useMemo(() => new Map<string, string>(), []);
 
@@ -742,6 +761,35 @@ export default function Home() {
   }, [language, quickChatMessages]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = localStorage.getItem(QUICK_CHAT_LAYOUT_KEY);
+    if (!raw) {
+      setQuickChatLayout(getQuickChatPresetLayout(true));
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw) as Partial<QuickChatLayout>;
+      if (
+        typeof parsed.left === "number" &&
+        typeof parsed.top === "number" &&
+        typeof parsed.width === "number" &&
+        typeof parsed.height === "number"
+      ) {
+        setQuickChatLayout(clampQuickChatLayout(parsed as QuickChatLayout));
+        return;
+      }
+    } catch {
+      // Ignore malformed quick chat layout
+    }
+    setQuickChatLayout(getQuickChatPresetLayout(true));
+  }, []);
+
+  useEffect(() => {
+    if (!quickChatLayout || typeof window === "undefined") return;
+    localStorage.setItem(QUICK_CHAT_LAYOUT_KEY, JSON.stringify(quickChatLayout));
+  }, [quickChatLayout]);
+
+  useEffect(() => {
     if (!language) return;
     if (chatMode !== "buddy" || messages.length === 0) {
       return;
@@ -1097,7 +1145,88 @@ export default function Home() {
         behavior: "auto",
       });
     });
-  }, [quickChatMessages, quickChatOpen]);
+  }, [quickChatMessages, quickChatLoading, quickChatOpen]);
+
+  useEffect(() => {
+    if (!quickChatOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const shell = quickChatShellRef.current;
+      if (!shell) return;
+      if (shell.contains(event.target as Node)) {
+        return;
+      }
+      setQuickChatOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [quickChatOpen]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setQuickChatLayout((current) => clampQuickChatLayout(current || getQuickChatPresetLayout(quickChatLarge)));
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [quickChatLarge]);
+
+  useEffect(() => {
+    if (!quickChatOpen || typeof ResizeObserver === "undefined") return;
+    const panel = quickChatPanelRef.current;
+    if (!panel) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      setQuickChatLayout((current) => {
+        const nextBase = current || getQuickChatPresetLayout(quickChatLarge);
+        const next = clampQuickChatLayout({
+          ...nextBase,
+          width: entry.contentRect.width,
+          height: entry.contentRect.height,
+        });
+        if (
+          current &&
+          current.width === next.width &&
+          current.height === next.height &&
+          current.left === next.left &&
+          current.top === next.top
+        ) {
+          return current;
+        }
+        return next;
+      });
+    });
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [quickChatLarge, quickChatOpen]);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = quickChatDragRef.current;
+      if (!drag) return;
+      setQuickChatLayout((current) =>
+        clampQuickChatLayout({
+          ...(current || getQuickChatPresetLayout(quickChatLarge)),
+          left: drag.startLeft + (event.clientX - drag.startX),
+          top: drag.startTop + (event.clientY - drag.startY),
+        })
+      );
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const drag = quickChatDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      quickChatDragRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, [quickChatLarge]);
 
   async function fetchProgress() {
     if (!authUser) return;
@@ -3058,6 +3187,146 @@ export default function Home() {
     return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
+  function normalizeQuickChatText(value: string) {
+    return value
+      .toLocaleLowerCase()
+      .normalize("NFKC")
+      .replace(/[\s\p{P}\p{S}]+/gu, " ")
+      .trim();
+  }
+
+  function shouldHideQuickChatBody(payload?: QuickAssistantPayload) {
+    const body = (payload?.text || "").trim();
+    if (!body) return true;
+    if (!payload?.mode || payload.mode === "answer") {
+      return false;
+    }
+    return /^(check if|correct\b|fix\b|translate\b|say\b|how do you say\b|is ['"].+['"] correct)/i.test(body);
+  }
+
+  function getQuickChatDisplay(payload?: QuickAssistantPayload) {
+    const targetText = (payload?.targetText || "").trim();
+    const improved = (payload?.improved || "").trim();
+    const showImproved =
+      improved.length > 0 && normalizeQuickChatText(improved) !== normalizeQuickChatText(targetText);
+
+    return {
+      body: shouldHideQuickChatBody(payload) ? "" : (payload?.text || "").trim(),
+      translation: (payload?.translation || "").trim(),
+      note: (payload?.note || "").trim(),
+      primaryText: showImproved ? improved : targetText,
+      secondaryText: showImproved ? targetText : "",
+      verdict: payload?.verdict || null,
+      ttsText: (payload?.ttsText || "").trim(),
+      mode: payload?.mode || "answer",
+    };
+  }
+
+  function getQuickChatRecorderMimeType() {
+    if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
+      return "";
+    }
+    const candidates = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/mp4",
+      "audio/ogg;codecs=opus",
+      "audio/ogg",
+    ];
+    return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) || "";
+  }
+
+  function getQuickChatPresetLayout(large: boolean): QuickChatLayout {
+    if (typeof window === "undefined") {
+      return {
+        left: 16,
+        top: 16,
+        width: large ? 460 : 360,
+        height: large ? 640 : 540,
+      };
+    }
+    const width = Math.min(large ? 460 : 360, Math.max(window.innerWidth - 24, 320));
+    const height = Math.min(large ? 640 : 540, Math.max(window.innerHeight - 32, 420));
+    return {
+      left: Math.max(12, window.innerWidth - width - 16),
+      top: Math.max(12, window.innerHeight - height - 16),
+      width,
+      height,
+    };
+  }
+
+  function clampQuickChatLayout(layout: QuickChatLayout) {
+    if (typeof window === "undefined") {
+      return layout;
+    }
+    const maxWidth = Math.max(320, window.innerWidth - 12);
+    const maxHeight = Math.max(360, window.innerHeight - 12);
+    const width = Math.min(Math.max(320, Math.round(layout.width)), maxWidth);
+    const height = Math.min(Math.max(360, Math.round(layout.height)), maxHeight);
+    const left = Math.min(Math.max(6, Math.round(layout.left)), Math.max(6, window.innerWidth - width - 6));
+    const top = Math.min(Math.max(6, Math.round(layout.top)), Math.max(6, window.innerHeight - height - 6));
+    return { left, top, width, height };
+  }
+
+  function toggleQuickChatSize() {
+    const nextLarge = !quickChatLarge;
+    setQuickChatLarge(nextLarge);
+    setQuickChatLayout((current) => {
+      const preset = getQuickChatPresetLayout(nextLarge);
+      if (!current) {
+        return preset;
+      }
+      return clampQuickChatLayout({
+        ...current,
+        width: preset.width,
+        height: preset.height,
+      });
+    });
+  }
+
+  function startQuickChatDrag(event: React.PointerEvent<HTMLElement>) {
+    const target = event.target as HTMLElement | null;
+    if (!target || target.closest("button, textarea, input, a, code")) {
+      return;
+    }
+    const base = quickChatLayout || getQuickChatPresetLayout(quickChatLarge);
+    quickChatDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft: base.left,
+      startTop: base.top,
+    };
+  }
+
+  function getSurgeHintDisplay(answer: string) {
+    return answer
+      .replace(/\([^)]*\)/g, " ")
+      .replace(/\s*\/\s*/g, "/")
+      .split(" ")
+      .map((token) => (token.includes("/") ? token.split("/").filter(Boolean)[0] || token : token))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function buildSurgeHintGlyphs(answer: string, revealCount: number) {
+    const display = getSurgeHintDisplay(answer);
+    let revealed = 0;
+    return Array.from(display).map((char) => {
+      const isLetter = /[\p{L}\p{N}]/u.test(char);
+      if (!isLetter) {
+        return { char, revealed: true, isLetter: false };
+      }
+      revealed += 1;
+      return {
+        char: revealed <= revealCount ? char : "•",
+        revealed: revealed <= revealCount,
+        isLetter: true,
+      };
+    });
+  }
+
   function normalizeWord(word: string) {
     return word
       .toLocaleLowerCase()
@@ -3179,9 +3448,6 @@ export default function Home() {
         });
       });
 
-      if (index === 0 && speechPlaybackTokenRef.current === token) {
-        await new Promise((resolve) => window.setTimeout(resolve, 180));
-      }
     }
 
     if (speechPlaybackTokenRef.current === token) {
@@ -3330,7 +3596,9 @@ export default function Home() {
   }
 
   async function transcribeQuickChatAudio(blob: Blob) {
-    if (!language) return;
+    if (!language) {
+      throw new Error("Choose a language first.");
+    }
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : "");
@@ -3349,14 +3617,16 @@ export default function Home() {
     });
 
     if (!res.ok) {
-      throw new Error("Transcription failed");
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(data?.error || "Transcription failed");
     }
 
     const data = (await res.json()) as { text?: string };
     const text = (data.text || "").trim();
-    if (text) {
-      await sendQuickChatMessage(text, { force: true });
+    if (!text) {
+      throw new Error("I did not catch any speech.");
     }
+    await sendQuickChatMessage(text, { force: true });
   }
 
   async function toggleQuickChatRecording() {
@@ -3367,10 +3637,15 @@ export default function Home() {
       return;
     }
 
+    setQuickChatOpen(true);
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const recorder = new MediaRecorder(stream);
+    const mimeType = getQuickChatRecorderMimeType();
+    const recorder = mimeType
+      ? new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 128000 })
+      : new MediaRecorder(stream);
     quickChatRecorderRef.current = recorder;
     quickChatChunksRef.current = [];
+    let completed = false;
 
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) {
@@ -3378,7 +3653,31 @@ export default function Home() {
       }
     };
 
+    recorder.onerror = () => {
+      if (completed) return;
+      completed = true;
+      stream.getTracks().forEach((track) => track.stop());
+      quickChatRecorderRef.current = null;
+      quickChatChunksRef.current = [];
+      setQuickChatRecording(false);
+      setQuickChatLoading(false);
+      setQuickChatMessages((current) => [
+        ...current,
+        {
+          id: makeId(),
+          role: "assistant",
+          payload: {
+            mode: "answer",
+            title: "Voice",
+            text: "Recording failed. Try the mic again.",
+          },
+        },
+      ]);
+    };
+
     recorder.onstop = async () => {
+      if (completed) return;
+      completed = true;
       const blob = new Blob(quickChatChunksRef.current, {
         type: recorder.mimeType || "audio/webm",
       });
@@ -3390,7 +3689,11 @@ export default function Home() {
       setQuickChatLoading(true);
       try {
         await transcribeQuickChatAudio(blob);
-      } catch {
+      } catch (error) {
+        const message =
+          error instanceof Error && error.message.trim()
+            ? error.message.trim()
+            : "I could not transcribe that. Try again.";
         setQuickChatMessages((current) => [
           ...current,
           {
@@ -3399,7 +3702,7 @@ export default function Home() {
             payload: {
               mode: "answer",
               title: "Voice",
-              text: "I could not transcribe that. Try again.",
+              text: message,
             },
           },
         ]);
@@ -3408,9 +3711,8 @@ export default function Home() {
       }
     };
 
-    recorder.start();
+    recorder.start(250);
     setQuickChatRecording(true);
-    setQuickChatOpen(true);
   }
 
   function toSurgeItem(record: SurgeProgressRecord): SurgeItem {
@@ -3953,23 +4255,11 @@ export default function Home() {
     return direction === "target_to_english" ? item.translation : item.text;
   }
 
-  function buildSurgeHintMask(answer: string, revealCount: number) {
-    if (!revealCount) return "";
-    let revealed = 0;
-    return Array.from(answer).map((char) => {
-      if (!/[\p{L}\p{N}]/u.test(char)) {
-        return char;
-      }
-      revealed += 1;
-      return revealed <= revealCount ? char : "·";
-    }).join("");
-  }
-
   function revealSurgeTypingHint() {
     if (!surgeSession || surgeSession.phase !== "typing" || surgeSession.typingFeedback) return;
     const current = surgeSession.typingQueue[0];
     if (!current) return;
-    const answer = getSurgeExpectedAnswer(current, surgeSession.typingDirection);
+    const answer = getSurgeHintDisplay(getSurgeExpectedAnswer(current, surgeSession.typingDirection));
     const revealableCount = Array.from(answer).filter((char) => /[\p{L}\p{N}]/u.test(char)).length;
     setSurgeSession({
       ...surgeSession,
@@ -4037,15 +4327,12 @@ export default function Home() {
     const direction = surgeSession.typingDirection || getDirectionForStage(currentRecord?.stage ?? 0);
     const mode = direction === "target_to_english" ? "english" : "target";
     const submitted = normalizeSurgeAnswer(surgeSession.typingInput, mode);
-    const expected = normalizeSurgeAnswer(
-      direction === "target_to_english" ? current.translation : current.text,
-      mode
-    );
+    const expectedText = direction === "target_to_english" ? current.translation : current.text;
     const now = Date.now();
 
     noteSurgeExposure(current);
 
-    if (submitted && submitted === expected) {
+    if (submitted && matchesSurgeAnswer(surgeSession.typingInput, expectedText, mode)) {
       syncSurgeRecord(current, (record) => {
         const nextStage = Math.min(record.stage + 1, 6);
         return {
@@ -4979,6 +5266,20 @@ export default function Home() {
     }
     return surgeSession.typingFeedback?.direction || surgeSession.typingDirection || getSurgeDirection(currentSurgePrompt);
   }, [currentSurgePrompt, surgeSession]);
+  const currentSurgeHintAnswer = useMemo(() => {
+    if (!currentSurgePrompt || !currentSurgeTypingDirection) {
+      return "";
+    }
+    return getSurgeHintDisplay(getSurgeExpectedAnswer(currentSurgePrompt, currentSurgeTypingDirection));
+  }, [currentSurgePrompt, currentSurgeTypingDirection]);
+  const currentSurgeHintGlyphs = useMemo(
+    () => buildSurgeHintGlyphs(currentSurgeHintAnswer, surgeSession?.typingHintCount || 0),
+    [currentSurgeHintAnswer, surgeSession?.typingHintCount]
+  );
+  const currentSurgeHintTotal = useMemo(
+    () => currentSurgeHintGlyphs.filter((glyph) => glyph.isLetter).length,
+    [currentSurgeHintGlyphs]
+  );
   const studyVisibleItems = useMemo(() => {
     const entries = studyPack?.entries ?? [];
     return entries
@@ -5238,7 +5539,31 @@ export default function Home() {
           </div>
           {surgeSession.typingHintCount > 0 && !surgeSession.typingFeedback ? (
             <div className="surge-hint">
-              Hint: {buildSurgeHintMask(getSurgeExpectedAnswer(currentSurgePrompt, currentSurgeTypingDirection), surgeSession.typingHintCount)}
+              <div className="surge-hint-top">
+                <span>Hint</span>
+                <span>
+                  {Math.min(surgeSession.typingHintCount, currentSurgeHintTotal)}/{currentSurgeHintTotal}
+                </span>
+              </div>
+              <div className="surge-hint-track">
+                <span
+                  style={{
+                    width: currentSurgeHintTotal
+                      ? `${(Math.min(surgeSession.typingHintCount, currentSurgeHintTotal) / currentSurgeHintTotal) * 100}%`
+                      : "0%",
+                  }}
+                />
+              </div>
+              <div className="surge-hint-mask" aria-live="polite">
+                {currentSurgeHintGlyphs.map((glyph, index) => (
+                  <span
+                    key={`${glyph.char}-${index}`}
+                    className={`surge-hint-chip${glyph.isLetter ? " letter" : " spacer"}${glyph.revealed ? " revealed" : ""}`}
+                  >
+                    {glyph.char === " " ? "\u00A0" : glyph.char}
+                  </span>
+                ))}
+              </div>
             </div>
           ) : null}
           {surgeSession.typingFeedback ? (
@@ -6876,64 +7201,80 @@ export default function Home() {
     </section>
   );
 
+  const quickChatShellStyle = quickChatLayout
+    ? {
+        left: quickChatLayout.left,
+        top: quickChatLayout.top,
+        right: "auto",
+        bottom: "auto",
+      }
+    : undefined;
+  const quickChatPanelStyle = quickChatLayout
+    ? {
+        width: quickChatLayout.width,
+        height: quickChatLayout.height,
+      }
+    : undefined;
+
   const quickChatWidget = (
-    <div className={`quick-chat-shell${quickChatOpen ? " open" : ""}${quickChatLarge ? " large" : ""}`}>
+    <div
+      ref={quickChatShellRef}
+      className={`quick-chat-shell${quickChatOpen ? " open" : ""}${quickChatLarge ? " large" : ""}`}
+      style={quickChatShellStyle}
+    >
       {quickChatOpen ? (
-        <section className="quick-chat-panel">
-          <div className="quick-chat-header">
-            <div>
-              <div className="quick-chat-title">Quick Chat</div>
-              <div className="quick-chat-sub">Short help, fast answers.</div>
-            </div>
-            <div className="quick-chat-header-actions">
-              <button
-                type="button"
-                className="ghost quick-chat-header-btn"
-                onClick={() => setQuickChatLarge((current) => !current)}
-              >
-                {quickChatLarge ? "Small" : "Large"}
-              </button>
-              <button
-                type="button"
-                className="ghost quick-chat-header-btn"
-                onClick={() => setQuickChatOpen(false)}
-              >
-                Minimize
-              </button>
-            </div>
+        <section
+          ref={quickChatPanelRef}
+          className="quick-chat-panel"
+          style={quickChatPanelStyle}
+        >
+          <div className="quick-chat-panel-actions" onPointerDown={startQuickChatDrag}>
+            <div className="quick-chat-drag-handle" aria-hidden="true" />
+            <button
+              type="button"
+              className="ghost quick-chat-header-btn"
+              onClick={toggleQuickChatSize}
+            >
+              {quickChatLarge ? "Small" : "Large"}
+            </button>
+            <button
+              type="button"
+              className="ghost quick-chat-header-btn"
+              onClick={() => setQuickChatOpen(false)}
+            >
+              Minimize
+            </button>
           </div>
           <div ref={quickChatMessagesRef} className="quick-chat-messages">
             {quickChatMessages.length ? (
-              quickChatMessages.map((message) =>
-                message.role === "user" ? (
+              quickChatMessages.map((message) => {
+                const display = getQuickChatDisplay(message.payload);
+                return message.role === "user" ? (
                   <div key={message.id} className="quick-chat-row user">
                     <div className="quick-chat-bubble user">{message.text}</div>
                   </div>
                 ) : (
                   <div key={message.id} className="quick-chat-row assistant">
-                    <div className={`quick-chat-card ${message.payload?.mode || "answer"}`}>
-                      <div className="quick-chat-card-top">
-                        <div className="quick-chat-card-title">{message.payload?.title || "Quick help"}</div>
-                        {message.payload?.verdict ? (
-                          <span className={`quick-chat-badge ${message.payload.verdict}`}>{message.payload.verdict}</span>
-                        ) : null}
-                      </div>
-                      {message.payload?.text ? <div className="quick-chat-body">{message.payload.text}</div> : null}
-                      {message.payload?.targetText ? (
-                        <div className="quick-chat-target">{message.payload.targetText}</div>
+                    <div className={`quick-chat-card ${display.mode}`}>
+                      {display.verdict ? (
+                        <div className="quick-chat-meta">
+                          <span className={`quick-chat-badge ${display.verdict}`}>{display.verdict}</span>
+                        </div>
                       ) : null}
-                      {message.payload?.improved ? (
-                        <div className="quick-chat-improved">{message.payload.improved}</div>
+                      {display.body ? <div className="quick-chat-body">{display.body}</div> : null}
+                      {display.primaryText ? <div className="quick-chat-target">{display.primaryText}</div> : null}
+                      {display.secondaryText ? (
+                        <div className="quick-chat-secondary">{display.secondaryText}</div>
                       ) : null}
-                      {message.payload?.translation ? (
-                        <div className="quick-chat-translation">{message.payload.translation}</div>
+                      {display.translation ? (
+                        <div className="quick-chat-translation">{display.translation}</div>
                       ) : null}
-                      {message.payload?.note ? <div className="quick-chat-note">{message.payload.note}</div> : null}
-                      {message.payload?.ttsText ? (
+                      {display.note ? <div className="quick-chat-note">{display.note}</div> : null}
+                      {display.ttsText ? (
                         <button
                           type="button"
                           className="ghost quick-chat-play"
-                          onClick={() => void playFlashcardAudio("quick", message.payload?.ttsText || "")}
+                          onClick={() => void playFlashcardAudio("quick", display.ttsText)}
                         >
                           Play
                         </button>
@@ -6941,7 +7282,7 @@ export default function Home() {
                     </div>
                   </div>
                 )
-              )
+              })
             ) : (
               <div className="quick-chat-empty">
                 Ask in English for a translation, write in {targetLabel} for a correction, or say <code>say ...</code>.

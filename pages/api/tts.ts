@@ -22,9 +22,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       input: text,
       instructions:
         variant === "slow"
-          ? `Pronounce this ${language} text clearly, gently, and learner-friendly, with careful articulation and a short teaching-style pace. Speak only the provided text.`
+          ? `Pronounce this ${language} text clearly, gently, and learner-friendly, with careful articulation and crisp separation between words. Speak only the provided text.`
           : `Pronounce this ${language} text naturally, smoothly, and confidently, like a fluent local speaker in everyday conversation. Speak only the provided text.`,
-      speed: variant === "slow" ? 0.95 : 1,
     });
 
     res.setHeader("Content-Type", "audio/mpeg");

@@ -6,6 +6,23 @@ type QuickHistoryItem = {
   text: string;
 };
 
+function normalizeQuickText(value: string) {
+  return value
+    .toLocaleLowerCase()
+    .normalize("NFKC")
+    .replace(/[\s\p{P}\p{S}]+/gu, " ")
+    .trim();
+}
+
+function sanitizeQuickBody(mode: string | undefined, value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (mode === "answer") return trimmed;
+  return /^(check if|correct\b|fix\b|translate\b|say\b|how do you say\b|is ['"].+['"] correct)/i.test(trimmed)
+    ? ""
+    : trimmed;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
@@ -48,6 +65,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     "For TTS requests, set mode to tts and fill ttsText with the exact text to speak.",
     "If the user says 'say ...', 'how do you say ...', or asks to hear the last sentence, treat it as a tts request.",
     "If you mention a target-language sentence in a correction or translation, include it in targetText so the UI can show it clearly.",
+    "Do not repeat the user's request as commentary. Never write lines like 'Check if...' or 'Correct the order...'.",
+    "If targetText and improved would be the same sentence, leave improved empty.",
     "JSON schema:",
     '{"mode":"translation|correction|answer|tts","title":"short label","text":"short English explanation","targetText":"optional target-language text","translation":"optional English translation","verdict":"ok|fix|note","improved":"optional corrected target-language version","note":"optional very short note","ttsText":"optional exact text to speak"}',
   ].join(" ");
@@ -102,20 +121,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       throw new Error("Invalid quick chat payload");
     }
 
+    const targetText = typeof parsed.targetText === "string" ? parsed.targetText.trim() : "";
+    const improved = typeof parsed.improved === "string" ? parsed.improved.trim() : "";
+    const dedupedImproved =
+      improved && normalizeQuickText(improved) !== normalizeQuickText(targetText) ? improved : "";
+
     res.status(200).json({
       mode:
         parsed.mode === "translation" || parsed.mode === "correction" || parsed.mode === "tts"
           ? parsed.mode
           : "answer",
       title: typeof parsed.title === "string" ? parsed.title.trim() : "Quick help",
-      text: typeof parsed.text === "string" ? parsed.text.trim() : "",
-      targetText: typeof parsed.targetText === "string" ? parsed.targetText.trim() : "",
+      text: sanitizeQuickBody(parsed.mode, typeof parsed.text === "string" ? parsed.text : ""),
+      targetText,
       translation: typeof parsed.translation === "string" ? parsed.translation.trim() : "",
       verdict:
         parsed.verdict === "ok" || parsed.verdict === "fix" || parsed.verdict === "note"
           ? parsed.verdict
           : null,
-      improved: typeof parsed.improved === "string" ? parsed.improved.trim() : "",
+      improved: dedupedImproved,
       note: typeof parsed.note === "string" ? parsed.note.trim() : "",
       ttsText: typeof parsed.ttsText === "string" ? parsed.ttsText.trim() : "",
     });
