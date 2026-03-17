@@ -252,7 +252,6 @@ export default function Home() {
   const [scenarioFolderFilter, setScenarioFolderFilter] = useState<string>("all");
   const [topicFolderFilter, setTopicFolderFilter] = useState<string>("all");
   const [activeFolderMenu, setActiveFolderMenu] = useState<string | null>(null);
-  const [flashcardHintMap, setFlashcardHintMap] = useState<Record<string, number>>({});
   const [holdDeleteId, setHoldDeleteId] = useState<string | null>(null);
   const [surgeProgressMap, setSurgeProgressMap] = useState<Record<string, SurgeProgressRecord>>({});
   const [surgeSession, setSurgeSession] = useState<SurgeSession | null>(null);
@@ -3249,7 +3248,6 @@ export default function Home() {
   }
 
   function toggleStudyCard(index: number) {
-    resetFlashcardHint(`common:${index}`);
     setStudyFlipped((prev) => ({
       ...prev,
       [index]: !prev[index],
@@ -3257,7 +3255,6 @@ export default function Home() {
   }
 
   function toggleSentenceCard(index: number) {
-    resetFlashcardHint(`sentence:${index}`);
     setSentenceFlipped((prev) => ({
       ...prev,
       [index]: !prev[index],
@@ -3265,9 +3262,6 @@ export default function Home() {
   }
 
   function toggleScenarioCard(index: number) {
-    if (activeScenarioVocab) {
-      resetFlashcardHint(`scenario:${activeScenarioVocab.id}:${index}`);
-    }
     setScenarioVocabFlipped((prev) => ({
       ...prev,
       [index]: !prev[index],
@@ -3557,24 +3551,6 @@ export default function Home() {
 
   function getFolderKey(scope: "common" | "sentence" | "scenario" | "topic", index: number, scenarioId?: string | null) {
     return `${scope}:${scenarioId || "none"}:${index}`;
-  }
-
-  function toggleFlashcardHint(key: string, answer: string) {
-    const cleanAnswer = getSurgeHintDisplay(answer);
-    const revealableCount = Array.from(cleanAnswer).filter((char) => /[\p{L}\p{N}]/u.test(char)).length;
-    setFlashcardHintMap((current) => ({
-      ...current,
-      [key]: Math.min((current[key] || 0) + 1, revealableCount),
-    }));
-  }
-
-  function resetFlashcardHint(key: string) {
-    setFlashcardHintMap((current) => {
-      if (!current[key]) return current;
-      const next = { ...current };
-      delete next[key];
-      return next;
-    });
   }
 
   function exampleKey(scope: ExampleScope, word: string, scenarioId?: string | null) {
@@ -5070,9 +5046,6 @@ export default function Home() {
   }
 
   function toggleTopicCard(index: number) {
-    if (activeTopic) {
-      resetFlashcardHint(`topic:${activeTopic}:${index}`);
-    }
     setTopicVocabFlipped((prev) => ({
       ...prev,
       [index]: !prev[index],
@@ -5569,9 +5542,13 @@ export default function Home() {
     const entries = studyPack?.entries ?? [];
     return entries
       .map((entry, index) => ({ entry, index }))
-      .filter((item) => !item.entry.archived)
       .filter((item) =>
-        studyFolderFilter === "all" ? true : normalizeFolderName(item.entry.folder || "") === studyFolderFilter
+        studyFolderFilter === "archived"
+          ? item.entry.archived
+          : !item.entry.archived &&
+            (studyFolderFilter === "all"
+              ? true
+              : normalizeFolderName(item.entry.folder || "") === studyFolderFilter)
       )
       .filter((item) => (showStudyStarredOnly ? item.entry.starred : true));
   }, [showStudyStarredOnly, studyFolderFilter, studyPack]);
@@ -5579,11 +5556,13 @@ export default function Home() {
     const entries = sentencePack?.entries ?? [];
     return entries
       .map((entry, index) => ({ entry, index }))
-      .filter((item) => !item.entry.archived)
       .filter((item) =>
-        sentenceFolderFilter === "all"
-          ? true
-          : normalizeFolderName(item.entry.folder || "") === sentenceFolderFilter
+        sentenceFolderFilter === "archived"
+          ? item.entry.archived
+          : !item.entry.archived &&
+            (sentenceFolderFilter === "all"
+              ? true
+              : normalizeFolderName(item.entry.folder || "") === sentenceFolderFilter)
       )
       .filter((item) => (showSentenceStarredOnly ? item.entry.starred : true));
   }, [sentenceFolderFilter, sentencePack, showSentenceStarredOnly]);
@@ -6041,6 +6020,13 @@ export default function Home() {
                     <button type="button" className="ghost action-fab-item" onClick={() => setStudyFolderFilter("all")}>
                       All folders
                     </button>
+                    <button
+                      type="button"
+                      className="ghost action-fab-item"
+                      onClick={() => setStudyFolderFilter("archived")}
+                    >
+                      Archived
+                    </button>
                     {studyFolders.map((folder) => (
                       <button
                         key={folder}
@@ -6078,7 +6064,11 @@ export default function Home() {
         <p className="dashboard-alert">Set a language above to generate vocabulary.</p>
       ) : !studyPack || studyVisibleItems.length === 0 ? (
         <div className="home-vocab-empty">
-          {studyFolderFilter === "all" ? "Generate a list to start studying." : "No words in this folder yet."}
+          {studyFolderFilter === "all"
+            ? "Generate a list to start studying."
+            : studyFolderFilter === "archived"
+              ? "No archived words yet."
+              : "No words in this folder yet."}
         </div>
       ) : studyMode === "list" ? (
         <div className="vocab-list">
@@ -6107,9 +6097,7 @@ export default function Home() {
                     const pronunciationKey = speechKey("common", entry.word);
                     const speechActive =
                       speechPlayingKey === pronunciationKey || speechLoadingKey === pronunciationKey;
-                    const hintKey = `common:${index}`;
                     const folderMenuKey = `common:${index}`;
-                    const hintGlyphs = buildSurgeHintGlyphs(backText, flashcardHintMap[hintKey] || 0);
                     // examples are shown in a modal
                     return (
                       <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
@@ -6177,17 +6165,6 @@ export default function Home() {
                             </button>
                             <button
                               type="button"
-                              className="vocab-card-icon"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                toggleFlashcardHint(hintKey, backText);
-                              }}
-                              aria-label="Hint"
-                            >
-                              ?
-                            </button>
-                            <button
-                              type="button"
                               className={`vocab-card-icon ${entry.folder ? "active" : ""}`}
                               onClick={(event) => {
                                 event.stopPropagation();
@@ -6213,18 +6190,6 @@ export default function Home() {
                             <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
                               {flipped ? backText : frontText}
                             </div>
-                            {(flashcardHintMap[hintKey] || 0) > 0 ? (
-                              <div className="vocab-card-secret-hint">
-                                {hintGlyphs.map((glyph, hintIndex) => (
-                                  <span
-                                    key={`${hintKey}-${hintIndex}`}
-                                    className={`vocab-hint-chip${glyph.isLetter ? " letter" : " spacer"}${glyph.revealed ? " revealed" : ""}`}
-                                  >
-                                    {glyph.char === " " ? "\u00A0" : glyph.char}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
                             <div className="vocab-card-hint">
                               {flipped ? "Tap to hide" : "Tap to flip"}
                             </div>
@@ -6333,6 +6298,13 @@ export default function Home() {
                     <button type="button" className="ghost action-fab-item" onClick={() => setSentenceFolderFilter("all")}>
                       All folders
                     </button>
+                    <button
+                      type="button"
+                      className="ghost action-fab-item"
+                      onClick={() => setSentenceFolderFilter("archived")}
+                    >
+                      Archived
+                    </button>
                     {sentenceFolders.map((folder) => (
                       <button
                         key={folder}
@@ -6370,7 +6342,9 @@ export default function Home() {
         <div className="home-vocab-empty">
           {sentenceFolderFilter === "all"
             ? "Generate short everyday sentences to build useful patterns."
-            : "No sentences in this folder yet."}
+            : sentenceFolderFilter === "archived"
+              ? "No archived sentences yet."
+              : "No sentences in this folder yet."}
         </div>
       ) : sentenceMode === "list" ? (
         <div className="vocab-list">
@@ -6397,9 +6371,7 @@ export default function Home() {
             const backText = sentenceFront === "word" ? entry.translation : entry.word;
             const pronunciationKey = speechKey("sentence", entry.word);
             const speechActive = speechPlayingKey === pronunciationKey || speechLoadingKey === pronunciationKey;
-            const hintKey = `sentence:${index}`;
             const folderMenuKey = `sentence:${index}`;
-            const hintGlyphs = buildSurgeHintGlyphs(backText, flashcardHintMap[hintKey] || 0);
             return (
               <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
                 <div
@@ -6454,17 +6426,6 @@ export default function Home() {
                     </button>
                     <button
                       type="button"
-                      className="vocab-card-icon"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        toggleFlashcardHint(hintKey, backText);
-                      }}
-                      aria-label="Hint"
-                    >
-                      ?
-                    </button>
-                    <button
-                      type="button"
                       className={`vocab-card-icon ${entry.folder ? "active" : ""}`}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -6490,18 +6451,6 @@ export default function Home() {
                     <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
                       {flipped ? backText : frontText}
                     </div>
-                    {(flashcardHintMap[hintKey] || 0) > 0 ? (
-                      <div className="vocab-card-secret-hint">
-                        {hintGlyphs.map((glyph, hintIndex) => (
-                          <span
-                            key={`${hintKey}-${hintIndex}`}
-                            className={`vocab-hint-chip${glyph.isLetter ? " letter" : " spacer"}${glyph.revealed ? " revealed" : ""}`}
-                          >
-                            {glyph.char === " " ? "\u00A0" : glyph.char}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
                     <div className="vocab-card-hint">{flipped ? "Tap to hide" : "Tap to flip"}</div>
                   </div>
                 </div>
