@@ -645,6 +645,62 @@ textarea:focus {
   cursor: pointer;
 }
 
+.vocab-folder-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  gap: 6px;
+  min-width: 150px;
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--card-bg-strong);
+  box-shadow: var(--shadow);
+  z-index: 30;
+}
+
+.vocab-folder-item {
+  justify-content: flex-start;
+  white-space: nowrap;
+}
+
+.vocab-folder-item.active {
+  background: var(--card-highlight);
+}
+
+.vocab-card-secret-hint {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.vocab-hint-chip {
+  min-width: 16px;
+  min-height: 22px;
+  padding: 3px 5px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.vocab-hint-chip.letter.revealed {
+  background: color-mix(in srgb, var(--card-highlight) 42%, var(--surface-3) 58%);
+  color: var(--ink);
+}
+
+.vocab-hint-chip.spacer {
+  min-width: 6px;
+  padding-inline: 0;
+  background: transparent;
+}
+
 .vocab-card:hover {
   background: rgba(255, 255, 255, 0.08);
 }
@@ -3178,6 +3234,9 @@ textarea {
   gap: 10px;
   text-align: center;
   transition: transform 0.18s ease, background 0.22s ease, box-shadow 0.22s ease;
+  max-width: 480px;
+  width: min(100%, 480px);
+  margin-inline: auto;
 }
 
 .surge-card {

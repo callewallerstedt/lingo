@@ -78,6 +78,7 @@ type StudyEntry = {
   translation: string;
   starred?: boolean;
   archived?: boolean;
+  folder?: string | null;
 };
 
 type StudyPack = {
@@ -244,10 +245,14 @@ export default function Home() {
   const [activeScenarioVocab, setActiveScenarioVocab] = useState<ScenarioDefinition | null>(null);
   const [showStarredOnly, setShowStarredOnly] = useState<boolean>(false);
   const [showStudyStarredOnly, setShowStudyStarredOnly] = useState<boolean>(false);
-  const [showStudyArchivedOnly, setShowStudyArchivedOnly] = useState<boolean>(false);
+  const [studyFolderFilter, setStudyFolderFilter] = useState<string>("all");
   const [showSentenceStarredOnly, setShowSentenceStarredOnly] = useState<boolean>(false);
-  const [showSentenceArchivedOnly, setShowSentenceArchivedOnly] = useState<boolean>(false);
+  const [sentenceFolderFilter, setSentenceFolderFilter] = useState<string>("all");
   const [showScenarioStarredOnly, setShowScenarioStarredOnly] = useState<boolean>(false);
+  const [scenarioFolderFilter, setScenarioFolderFilter] = useState<string>("all");
+  const [topicFolderFilter, setTopicFolderFilter] = useState<string>("all");
+  const [activeFolderMenu, setActiveFolderMenu] = useState<string | null>(null);
+  const [flashcardHintMap, setFlashcardHintMap] = useState<Record<string, number>>({});
   const [holdDeleteId, setHoldDeleteId] = useState<string | null>(null);
   const [surgeProgressMap, setSurgeProgressMap] = useState<Record<string, SurgeProgressRecord>>({});
   const [surgeSession, setSurgeSession] = useState<SurgeSession | null>(null);
@@ -1111,6 +1116,7 @@ export default function Home() {
         return;
       }
       setTooltip(null);
+      setActiveFolderMenu(null);
       activeTargetRef.current = null;
     };
     window.addEventListener("click", handler);
@@ -1392,7 +1398,7 @@ export default function Home() {
     if (!authUser) return;
     const { data, error } = await supabase
       .from("user_vocab")
-      .select("scope, scenario_id, word_key, word, translation, starred, count, last_clicked, archived")
+      .select("scope, scenario_id, word_key, word, translation, starred, folder, count, last_clicked, archived")
       .eq("user_id", authUser.id)
       .eq("language", activeLanguage);
 
@@ -1425,6 +1431,7 @@ export default function Home() {
         translation: row.translation,
         starred: Boolean(row.starred),
         archived: Boolean(row.archived),
+        folder: typeof row.folder === "string" ? row.folder : null,
       };
       if (row.scope === "common") {
         commonEntries.push(entry);
@@ -1907,6 +1914,7 @@ export default function Home() {
     word: string;
     translation: string;
     starred: boolean;
+    folder?: string | null;
     count?: number;
     lastClicked?: number;
     archived?: boolean;
@@ -1922,6 +1930,7 @@ export default function Home() {
       word: row.word,
       translation: row.translation,
       starred: row.starred,
+      ...(row.folder !== undefined ? { folder: row.folder || null } : {}),
       count: row.count ?? 1,
       last_clicked: new Date(row.lastClicked ?? Date.now()).toISOString(),
       archived: row.archived ?? false,
@@ -3167,6 +3176,60 @@ export default function Home() {
     }
   }
 
+  function assignStudyFolder(index: number, folder: string | null) {
+    const target = studyPack?.entries[index];
+    setStudyPack((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        entries: prev.entries.map((entry, i) => (i === index ? { ...entry, folder } : entry)),
+      };
+    });
+    if (target) {
+      void upsertUserVocab([
+        {
+          scope: "common",
+          scenarioId: null,
+          wordKey: normalizeWord(target.word),
+          word: target.word,
+          translation: target.translation,
+          starred: Boolean(target.starred),
+          folder,
+          count: 1,
+          lastClicked: Date.now(),
+          archived: Boolean(target.archived),
+        },
+      ]);
+    }
+  }
+
+  function assignSentenceFolder(index: number, folder: string | null) {
+    const target = sentencePack?.entries[index];
+    setSentencePack((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        entries: prev.entries.map((entry, i) => (i === index ? { ...entry, folder } : entry)),
+      };
+    });
+    if (target) {
+      void upsertUserVocab([
+        {
+          scope: "sentence",
+          scenarioId: null,
+          wordKey: normalizeWord(target.word),
+          word: target.word,
+          translation: target.translation,
+          starred: Boolean(target.starred),
+          folder,
+          count: 1,
+          lastClicked: Date.now(),
+          archived: Boolean(target.archived),
+        },
+      ]);
+    }
+  }
+
   function clearScenarioVocab() {
     if (!activeScenarioVocab) return;
     setScenarioVocabMap((prev) => {
@@ -3186,6 +3249,7 @@ export default function Home() {
   }
 
   function toggleStudyCard(index: number) {
+    resetFlashcardHint(`common:${index}`);
     setStudyFlipped((prev) => ({
       ...prev,
       [index]: !prev[index],
@@ -3193,6 +3257,7 @@ export default function Home() {
   }
 
   function toggleSentenceCard(index: number) {
+    resetFlashcardHint(`sentence:${index}`);
     setSentenceFlipped((prev) => ({
       ...prev,
       [index]: !prev[index],
@@ -3200,6 +3265,9 @@ export default function Home() {
   }
 
   function toggleScenarioCard(index: number) {
+    if (activeScenarioVocab) {
+      resetFlashcardHint(`scenario:${activeScenarioVocab.id}:${index}`);
+    }
     setScenarioVocabFlipped((prev) => ({
       ...prev,
       [index]: !prev[index],
@@ -3346,6 +3414,60 @@ export default function Home() {
     });
   }
 
+  function createFolderWithPrompt(onSelect: (folder: string | null) => void) {
+    const raw = window.prompt("Folder name");
+    if (raw === null) return;
+    const folder = normalizeFolderName(raw);
+    if (!folder) return;
+    onSelect(folder);
+    setActiveFolderMenu(null);
+  }
+
+  function renderFolderMenu(
+    menuKey: string,
+    folders: string[],
+    currentFolder: string | null | undefined,
+    onSelect: (folder: string | null) => void
+  ) {
+    if (activeFolderMenu !== menuKey) {
+      return null;
+    }
+    return (
+      <div className="vocab-folder-menu" onClick={(event) => event.stopPropagation()}>
+        <button
+          type="button"
+          className={`ghost vocab-folder-item${!currentFolder ? " active" : ""}`}
+          onClick={() => {
+            onSelect(null);
+            setActiveFolderMenu(null);
+          }}
+        >
+          No folder
+        </button>
+        {folders.map((folder) => (
+          <button
+            key={folder}
+            type="button"
+            className={`ghost vocab-folder-item${currentFolder === folder ? " active" : ""}`}
+            onClick={() => {
+              onSelect(folder);
+              setActiveFolderMenu(null);
+            }}
+          >
+            {folder}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="ghost vocab-folder-item create"
+          onClick={() => createFolderWithPrompt(onSelect)}
+        >
+          + New folder
+        </button>
+      </div>
+    );
+  }
+
   function getSurgeHintDisplay(answer: string) {
     return answer
       .replace(/\([^)]*\)/g, " ")
@@ -3386,6 +3508,7 @@ export default function Home() {
       ...entry,
       starred: Boolean(entry.starred),
       archived: Boolean(entry.archived),
+      folder: entry.folder || null,
     }));
     const indexByKey = new Map<string, number>();
     merged.forEach((entry, index) => {
@@ -3404,6 +3527,7 @@ export default function Home() {
           ...entry,
           starred: Boolean(entry.starred),
           archived: Boolean(entry.archived),
+          folder: entry.folder || null,
         };
         indexByKey.set(key, merged.length);
         merged.push(next);
@@ -3416,9 +3540,41 @@ export default function Home() {
         translation: entry.translation || currentEntry.translation,
         starred: currentEntry.starred || Boolean(entry.starred),
         archived: currentEntry.archived || Boolean(entry.archived),
+        folder: entry.folder || currentEntry.folder || null,
       };
     });
     return { merged, added };
+  }
+
+  function normalizeFolderName(value: string) {
+    const trimmed = value.trim().replace(/\s+/g, " ");
+    return trimmed ? trimmed.slice(0, 40) : "";
+  }
+
+  function getEntryFolder(entry: StudyEntry) {
+    return entry.folder || null;
+  }
+
+  function getFolderKey(scope: "common" | "sentence" | "scenario" | "topic", index: number, scenarioId?: string | null) {
+    return `${scope}:${scenarioId || "none"}:${index}`;
+  }
+
+  function toggleFlashcardHint(key: string, answer: string) {
+    const cleanAnswer = getSurgeHintDisplay(answer);
+    const revealableCount = Array.from(cleanAnswer).filter((char) => /[\p{L}\p{N}]/u.test(char)).length;
+    setFlashcardHintMap((current) => ({
+      ...current,
+      [key]: Math.min((current[key] || 0) + 1, revealableCount),
+    }));
+  }
+
+  function resetFlashcardHint(key: string) {
+    setFlashcardHintMap((current) => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
   }
 
   function exampleKey(scope: ExampleScope, word: string, scenarioId?: string | null) {
@@ -4914,6 +5070,9 @@ export default function Home() {
   }
 
   function toggleTopicCard(index: number) {
+    if (activeTopic) {
+      resetFlashcardHint(`topic:${activeTopic}:${index}`);
+    }
     setTopicVocabFlipped((prev) => ({
       ...prev,
       [index]: !prev[index],
@@ -4954,6 +5113,69 @@ export default function Home() {
       void upsertUserVocab(rows);
     } finally {
       setStudyLoading(false);
+    }
+  }
+
+  function assignScenarioFolder(index: number, scenarioId: string, folder: string | null) {
+    const target = scenarioVocabMap[scenarioId]?.entries[index];
+    setScenarioVocabMap((prev) => {
+      const current = prev[scenarioId];
+      if (!current) return prev;
+      return {
+        ...prev,
+        [scenarioId]: {
+          ...current,
+          entries: current.entries.map((entry, i) => (i === index ? { ...entry, folder } : entry)),
+        },
+      };
+    });
+    if (target) {
+      void upsertUserVocab([
+        {
+          scope: "scenario",
+          scenarioId,
+          wordKey: normalizeWord(target.word),
+          word: target.word,
+          translation: target.translation,
+          starred: Boolean(target.starred),
+          folder,
+          count: 1,
+          lastClicked: Date.now(),
+          archived: Boolean(target.archived),
+        },
+      ]);
+    }
+  }
+
+  function assignTopicFolder(index: number, folder: string | null) {
+    if (!activeTopic) return;
+    const target = topicVocabMap[activeTopic]?.entries[index];
+    setTopicVocabMap((prev) => {
+      const current = prev[activeTopic];
+      if (!current) return prev;
+      return {
+        ...prev,
+        [activeTopic]: {
+          ...current,
+          entries: current.entries.map((entry, i) => (i === index ? { ...entry, folder } : entry)),
+        },
+      };
+    });
+    if (target) {
+      void upsertUserVocab([
+        {
+          scope: "topic",
+          scenarioId: activeTopic,
+          wordKey: normalizeWord(target.word),
+          word: target.word,
+          translation: target.translation,
+          starred: Boolean(target.starred),
+          folder,
+          count: 1,
+          lastClicked: Date.now(),
+          archived: Boolean(target.archived),
+        },
+      ]);
     }
   }
 
@@ -5327,20 +5549,44 @@ export default function Home() {
     () => currentSurgeHintGlyphs.filter((glyph) => glyph.isLetter).length,
     [currentSurgeHintGlyphs]
   );
+  const studyFolders = useMemo(
+    () => uniqueStrings((studyPack?.entries ?? []).map((entry) => normalizeFolderName(entry.folder || ""))),
+    [studyPack]
+  );
+  const sentenceFolders = useMemo(
+    () => uniqueStrings((sentencePack?.entries ?? []).map((entry) => normalizeFolderName(entry.folder || ""))),
+    [sentencePack]
+  );
+  const scenarioFolders = useMemo(() => {
+    const entries = activeScenarioVocab ? scenarioVocabMap[activeScenarioVocab.id]?.entries ?? [] : [];
+    return uniqueStrings(entries.map((entry) => normalizeFolderName(entry.folder || "")));
+  }, [activeScenarioVocab, scenarioVocabMap]);
+  const topicFolders = useMemo(() => {
+    const entries = activeTopic ? topicVocabMap[activeTopic]?.entries ?? [] : [];
+    return uniqueStrings(entries.map((entry) => normalizeFolderName(entry.folder || "")));
+  }, [activeTopic, topicVocabMap]);
   const studyVisibleItems = useMemo(() => {
     const entries = studyPack?.entries ?? [];
     return entries
       .map((entry, index) => ({ entry, index }))
-      .filter((item) => (showStudyArchivedOnly ? item.entry.archived : !item.entry.archived))
+      .filter((item) => !item.entry.archived)
+      .filter((item) =>
+        studyFolderFilter === "all" ? true : normalizeFolderName(item.entry.folder || "") === studyFolderFilter
+      )
       .filter((item) => (showStudyStarredOnly ? item.entry.starred : true));
-  }, [studyPack, showStudyArchivedOnly, showStudyStarredOnly]);
+  }, [showStudyStarredOnly, studyFolderFilter, studyPack]);
   const sentenceVisibleItems = useMemo(() => {
     const entries = sentencePack?.entries ?? [];
     return entries
       .map((entry, index) => ({ entry, index }))
-      .filter((item) => (showSentenceArchivedOnly ? item.entry.archived : !item.entry.archived))
+      .filter((item) => !item.entry.archived)
+      .filter((item) =>
+        sentenceFolderFilter === "all"
+          ? true
+          : normalizeFolderName(item.entry.folder || "") === sentenceFolderFilter
+      )
       .filter((item) => (showSentenceStarredOnly ? item.entry.starred : true));
-  }, [sentencePack, showSentenceArchivedOnly, showSentenceStarredOnly]);
+  }, [sentenceFolderFilter, sentencePack, showSentenceStarredOnly]);
 
   const filteredVocab = useMemo(() => {
     if (!showStarredOnly) return sortedVocab;
@@ -5783,33 +6029,30 @@ export default function Home() {
                   </button>
                 </div>
               </div>
-              <button type="button" className="ghost" onClick={() => void archiveCommonUnstarred()}>
-                Archive all but starred
-              </button>
               <button type="button" className="ghost" onClick={clearStudy}>
                 Clear
               </button>
               <div className="toolbar-right">
-                <button
-                  type="button"
-                  className={`toolbar-archive-toggle ${showStudyArchivedOnly ? "active" : ""}`}
-                  onClick={() => setShowStudyArchivedOnly((prev) => !prev)}
-                  aria-label={showStudyArchivedOnly ? "Show active words" : "Show archived words"}
-                  aria-pressed={showStudyArchivedOnly}
-                  title={showStudyArchivedOnly ? "Show active" : "Show archived"}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M4 7h16M6 7v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 7V5h6v2M9.5 12h5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  <span>Archived</span>
-                </button>
+                <div className="action-fab" aria-label="Filter folders">
+                  <button type="button" className="ghost action-fab-main">
+                    Folder: {studyFolderFilter === "all" ? "All" : studyFolderFilter}
+                  </button>
+                  <div className="action-fab-menu">
+                    <button type="button" className="ghost action-fab-item" onClick={() => setStudyFolderFilter("all")}>
+                      All folders
+                    </button>
+                    {studyFolders.map((folder) => (
+                      <button
+                        key={folder}
+                        type="button"
+                        className="ghost action-fab-item"
+                        onClick={() => setStudyFolderFilter(folder)}
+                      >
+                        {folder}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <button
                   type="button"
                   className={`toolbar-star-toggle ${showStudyStarredOnly ? "active" : ""}`}
@@ -5835,7 +6078,7 @@ export default function Home() {
         <p className="dashboard-alert">Set a language above to generate vocabulary.</p>
       ) : !studyPack || studyVisibleItems.length === 0 ? (
         <div className="home-vocab-empty">
-          {showStudyArchivedOnly ? "No archived words yet." : "Generate a list to start studying."}
+          {studyFolderFilter === "all" ? "Generate a list to start studying." : "No words in this folder yet."}
         </div>
       ) : studyMode === "list" ? (
         <div className="vocab-list">
@@ -5864,7 +6107,9 @@ export default function Home() {
                     const pronunciationKey = speechKey("common", entry.word);
                     const speechActive =
                       speechPlayingKey === pronunciationKey || speechLoadingKey === pronunciationKey;
-                    const holdId = `common-${index}`;
+                    const hintKey = `common:${index}`;
+                    const folderMenuKey = `common:${index}`;
+                    const hintGlyphs = buildSurgeHintGlyphs(backText, flashcardHintMap[hintKey] || 0);
                     // examples are shown in a modal
                     return (
                       <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
@@ -5930,45 +6175,56 @@ export default function Home() {
                             >
                               Ex
                             </button>
-                      <button
-                        type="button"
-                        className={`vocab-card-icon ${holdDeleteId === holdId ? "holding" : ""}`}
-                        onPointerDown={(event) => {
-                          event.stopPropagation();
-                          if (event.button !== 0) return;
-                          startArchiveHold(holdId, () => deleteStudyEntry(index));
-                        }}
-                        onPointerUp={(event) => {
-                          event.stopPropagation();
-                          if (event.button !== 0) return;
-                          endArchiveHold(holdId, () => void archiveStudyEntry(index));
-                        }}
-                        onPointerLeave={(event) => {
-                          event.stopPropagation();
-                          cancelArchiveHold(holdId);
-                        }}
-                        onPointerCancel={(event) => {
-                          event.stopPropagation();
-                          cancelArchiveHold(holdId);
-                        }}
-                        aria-label="Archive (hold to delete)"
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <path
-                            d="M4 7h16M6 7v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 7V5h6v2M9.5 12h5"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </button>
+                            <button
+                              type="button"
+                              className="vocab-card-icon"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleFlashcardHint(hintKey, backText);
+                              }}
+                              aria-label="Hint"
+                            >
+                              ?
+                            </button>
+                            <button
+                              type="button"
+                              className={`vocab-card-icon ${entry.folder ? "active" : ""}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setActiveFolderMenu((current) => (current === folderMenuKey ? null : folderMenuKey));
+                              }}
+                              aria-label="Folder"
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path
+                                  d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3l1.5 2H18A2.5 2.5 0 0 1 20.5 9.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5z"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            </button>
+                            {renderFolderMenu(folderMenuKey, studyFolders, getEntryFolder(entry), (folder) =>
+                              assignStudyFolder(index, folder)
+                            )}
                           </div>
                           <div className="vocab-card-face">
                             <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
                               {flipped ? backText : frontText}
                             </div>
+                            {(flashcardHintMap[hintKey] || 0) > 0 ? (
+                              <div className="vocab-card-secret-hint">
+                                {hintGlyphs.map((glyph, hintIndex) => (
+                                  <span
+                                    key={`${hintKey}-${hintIndex}`}
+                                    className={`vocab-hint-chip${glyph.isLetter ? " letter" : " spacer"}${glyph.revealed ? " revealed" : ""}`}
+                                  >
+                                    {glyph.char === " " ? "\u00A0" : glyph.char}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
                             <div className="vocab-card-hint">
                               {flipped ? "Tap to hide" : "Tap to flip"}
                             </div>
@@ -6065,31 +6321,30 @@ export default function Home() {
                   </button>
                 </div>
               </div>
-              <button type="button" className="ghost" onClick={() => void archiveSentenceUnstarred()}>
-                Archive all but starred
-              </button>
               <button type="button" className="ghost" onClick={clearSentenceStudy}>
                 Clear
               </button>
               <div className="toolbar-right">
-                <button
-                  type="button"
-                  className={`toolbar-archive-toggle ${showSentenceArchivedOnly ? "active" : ""}`}
-                  onClick={() => setShowSentenceArchivedOnly((prev) => !prev)}
-                  aria-pressed={showSentenceArchivedOnly}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M4 7h16M6 7v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 7V5h6v2M9.5 12h5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  <span>Archived</span>
-                </button>
+                <div className="action-fab" aria-label="Filter sentence folders">
+                  <button type="button" className="ghost action-fab-main">
+                    Folder: {sentenceFolderFilter === "all" ? "All" : sentenceFolderFilter}
+                  </button>
+                  <div className="action-fab-menu">
+                    <button type="button" className="ghost action-fab-item" onClick={() => setSentenceFolderFilter("all")}>
+                      All folders
+                    </button>
+                    {sentenceFolders.map((folder) => (
+                      <button
+                        key={folder}
+                        type="button"
+                        className="ghost action-fab-item"
+                        onClick={() => setSentenceFolderFilter(folder)}
+                      >
+                        {folder}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <button
                   type="button"
                   className={`toolbar-star-toggle ${showSentenceStarredOnly ? "active" : ""}`}
@@ -6113,7 +6368,9 @@ export default function Home() {
         <p className="dashboard-alert">Set a language above to generate sentence patterns.</p>
       ) : !sentencePack || sentenceVisibleItems.length === 0 ? (
         <div className="home-vocab-empty">
-          {showSentenceArchivedOnly ? "No archived sentences yet." : "Generate short everyday sentences to build useful patterns."}
+          {sentenceFolderFilter === "all"
+            ? "Generate short everyday sentences to build useful patterns."
+            : "No sentences in this folder yet."}
         </div>
       ) : sentenceMode === "list" ? (
         <div className="vocab-list">
@@ -6140,7 +6397,9 @@ export default function Home() {
             const backText = sentenceFront === "word" ? entry.translation : entry.word;
             const pronunciationKey = speechKey("sentence", entry.word);
             const speechActive = speechPlayingKey === pronunciationKey || speechLoadingKey === pronunciationKey;
-            const holdId = `sentence-${index}`;
+            const hintKey = `sentence:${index}`;
+            const folderMenuKey = `sentence:${index}`;
+            const hintGlyphs = buildSurgeHintGlyphs(backText, flashcardHintMap[hintKey] || 0);
             return (
               <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
                 <div
@@ -6195,43 +6454,54 @@ export default function Home() {
                     </button>
                     <button
                       type="button"
-                      className={`vocab-card-icon ${holdDeleteId === holdId ? "holding" : ""}`}
-                      onPointerDown={(event) => {
+                      className="vocab-card-icon"
+                      onClick={(event) => {
                         event.stopPropagation();
-                        if (event.button !== 0) return;
-                        startArchiveHold(holdId, () => deleteSentenceEntry(index));
+                        toggleFlashcardHint(hintKey, backText);
                       }}
-                      onPointerUp={(event) => {
+                      aria-label="Hint"
+                    >
+                      ?
+                    </button>
+                    <button
+                      type="button"
+                      className={`vocab-card-icon ${entry.folder ? "active" : ""}`}
+                      onClick={(event) => {
                         event.stopPropagation();
-                        if (event.button !== 0) return;
-                        endArchiveHold(holdId, () => void archiveSentenceEntry(index));
+                        setActiveFolderMenu((current) => (current === folderMenuKey ? null : folderMenuKey));
                       }}
-                      onPointerLeave={(event) => {
-                        event.stopPropagation();
-                        cancelArchiveHold(holdId);
-                      }}
-                      onPointerCancel={(event) => {
-                        event.stopPropagation();
-                        cancelArchiveHold(holdId);
-                      }}
-                      aria-label="Archive (hold to delete)"
+                      aria-label="Folder"
                     >
                       <svg viewBox="0 0 24 24" aria-hidden="true">
                         <path
-                          d="M4 7h16M6 7v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7M9 7V5h6v2M9.5 12h5"
+                          d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3l1.5 2H18A2.5 2.5 0 0 1 20.5 9.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5z"
                           fill="none"
                           stroke="currentColor"
                           strokeWidth="2"
-                          strokeLinecap="round"
                           strokeLinejoin="round"
                         />
                       </svg>
                     </button>
+                    {renderFolderMenu(folderMenuKey, sentenceFolders, getEntryFolder(entry), (folder) =>
+                      assignSentenceFolder(index, folder)
+                    )}
                   </div>
                   <div className="vocab-card-face">
                     <div className={flipped ? "vocab-card-translation" : "vocab-card-word"}>
                       {flipped ? backText : frontText}
                     </div>
+                    {(flashcardHintMap[hintKey] || 0) > 0 ? (
+                      <div className="vocab-card-secret-hint">
+                        {hintGlyphs.map((glyph, hintIndex) => (
+                          <span
+                            key={`${hintKey}-${hintIndex}`}
+                            className={`vocab-hint-chip${glyph.isLetter ? " letter" : " spacer"}${glyph.revealed ? " revealed" : ""}`}
+                          >
+                            {glyph.char === " " ? "\u00A0" : glyph.char}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                     <div className="vocab-card-hint">{flipped ? "Tap to hide" : "Tap to flip"}</div>
                   </div>
                 </div>

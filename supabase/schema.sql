@@ -34,6 +34,7 @@ create table if not exists user_vocab (
   word text not null,
   translation text not null,
   starred boolean not null default false,
+  folder text,
   count integer not null default 1,
   last_clicked timestamptz not null default now(),
   archived boolean not null default false,
@@ -80,6 +81,7 @@ alter table user_vocab add column if not exists word_key text;
 alter table user_vocab add column if not exists word text;
 alter table user_vocab add column if not exists translation text;
 alter table user_vocab add column if not exists starred boolean not null default false;
+alter table user_vocab add column if not exists folder text;
 alter table user_vocab add column if not exists count integer not null default 1;
 alter table user_vocab add column if not exists last_clicked timestamptz not null default now();
 alter table user_vocab add column if not exists archived boolean not null default false;
