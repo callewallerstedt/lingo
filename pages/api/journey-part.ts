@@ -560,6 +560,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         buildJourneyPrompt(String(language), String(difficulty || "easy"), part, reviewList, attempt),
         {
           model: OPENAI_HEAVY_MODEL,
+          reasoningEffort: "low",
+          verbosity: "low",
+          maxCompletionTokens: 3200,
         }
       );
       lastReply = reply;

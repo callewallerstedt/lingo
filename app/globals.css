@@ -3690,6 +3690,21 @@ textarea {
   gap: 18px;
 }
 
+.journey-focus-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  padding:
+    max(18px, env(safe-area-inset-top))
+    clamp(16px, 3vw, 28px)
+    max(18px, env(safe-area-inset-bottom));
+  align-content: start;
+  overflow-y: auto;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--card-highlight) 22%, transparent 78%), transparent 34%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 94%, black 6%), var(--bg));
+}
+
 .journey-panel-head {
   display: flex;
   justify-content: space-between;
@@ -4000,6 +4015,11 @@ textarea {
   align-items: center;
   padding: 16px 18px;
   border-radius: 18px;
+  width: min(100%, 1180px);
+  margin: 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 1;
   background:
     radial-gradient(circle at top right, color-mix(in srgb, var(--card-highlight) 42%, transparent 58%), transparent 34%),
     var(--card-bg);
@@ -4034,11 +4054,11 @@ textarea {
 }
 
 .journey-lesson-panel-focus {
-  max-width: 1080px;
+  max-width: 1180px;
   width: 100%;
   margin: 0 auto;
-  min-height: calc(100vh - 240px);
-  padding: 24px;
+  min-height: calc(100vh - 150px);
+  padding: clamp(20px, 2vw, 28px);
   display: grid;
   gap: 20px;
 }
@@ -4344,6 +4364,13 @@ textarea {
   .journey-panel,
   .journey-lesson-panel-focus {
     padding: 16px;
+  }
+
+  .journey-focus-shell {
+    padding:
+      max(10px, env(safe-area-inset-top))
+      10px
+      max(14px, env(safe-area-inset-bottom));
   }
 
   .journey-header-actions,

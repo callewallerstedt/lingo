@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { OPENAI_MODEL } from "../../lib/openai";
+import { callOpenAI } from "../../lib/openai";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
@@ -45,31 +45,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       },
     ];
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error("Missing OPENAI_API_KEY");
-    }
-
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: OPENAI_MODEL,
-        messages: prompt,
-        temperature: 1.0,
-      }),
+    const output = await callOpenAI(prompt, {
+      reasoningEffort: "none",
+      verbosity: "low",
+      maxCompletionTokens: 48,
     });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`OpenAI error: ${response.status} ${text}`);
-    }
-
-    const data = await response.json();
-    const output = data.choices?.[0]?.message?.content || "";
     const sceneDescription = output.split(/\r?\n/)[0]?.trim() || output.trim();
 
     res.json({ sceneDescription });

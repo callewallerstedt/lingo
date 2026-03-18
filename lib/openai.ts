@@ -1,5 +1,5 @@
-export const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
-export const OPENAI_HEAVY_MODEL = process.env.OPENAI_HEAVY_MODEL || "gpt-5";
+export const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-mini";
+export const OPENAI_HEAVY_MODEL = process.env.OPENAI_HEAVY_MODEL || "gpt-5.4";
 export const TRANSLATION_MODEL = process.env.OPENAI_TRANSLATION_MODEL || OPENAI_MODEL;
 export const TTS_MODEL = process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts";
 export const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe";
@@ -8,9 +8,40 @@ type OpenAIMessages = Array<{ role: string; content: Array<{ type: "text"; text:
 
 type OpenAIRequestOptions = {
   model?: string;
-  temperature?: number;
-  maxTokens?: number;
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  verbosity?: "low" | "medium" | "high";
+  maxCompletionTokens?: number;
+  promptCacheKey?: string;
 };
+
+function isGpt5FamilyModel(model: string) {
+  return /^gpt-5([.-]|$)/i.test(model);
+}
+
+function buildChatCompletionBody(messages: OpenAIMessages, options: OpenAIRequestOptions = {}) {
+  const model = options.model || OPENAI_MODEL;
+  const body: Record<string, unknown> = {
+    model,
+    messages,
+  };
+
+  if (typeof options.maxCompletionTokens === "number") {
+    body.max_completion_tokens = options.maxCompletionTokens;
+  }
+
+  if (options.promptCacheKey) {
+    body.prompt_cache_key = options.promptCacheKey;
+  }
+
+  if (isGpt5FamilyModel(model)) {
+    body.reasoning_effort = options.reasoningEffort || "low";
+    if (options.verbosity) {
+      body.verbosity = options.verbosity;
+    }
+  }
+
+  return body;
+}
 
 export async function callOpenAI(messages: OpenAIMessages, options: OpenAIRequestOptions = {}) {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -24,14 +55,7 @@ export async function callOpenAI(messages: OpenAIMessages, options: OpenAIReques
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model: options.model || OPENAI_MODEL,
-      messages: messages,
-      ...(typeof options.temperature === "number" ? { temperature: options.temperature } : {}),
-      ...(typeof options.maxTokens === "number" ? { max_tokens: options.maxTokens } : {}),
-      // Add cache busting to ensure fresh responses
-      user: `user_${Date.now()}_${Math.random()}`,
-    }),
+    body: JSON.stringify(buildChatCompletionBody(messages, options)),
   });
 
   if (!response.ok) {
@@ -45,38 +69,15 @@ export async function callOpenAI(messages: OpenAIMessages, options: OpenAIReques
 }
 
 export async function callOpenAIForTranslation(messages: Array<{ role: string; content: Array<{ type: "text"; text: string }> }>) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing OPENAI_API_KEY");
-  }
-
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: TRANSLATION_MODEL,
-      messages: messages,
-      temperature: 0, // More consistent and faster responses
-      max_tokens: 20, // Even smaller limit for word translations
-      // Add cache busting to ensure fresh responses
-      user: `user_${Date.now()}_${Math.random()}`,
-    }),
+  return callOpenAI(messages, {
+    model: TRANSLATION_MODEL,
+    reasoningEffort: "none",
+    verbosity: "low",
+    maxCompletionTokens: 24,
   });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`OpenAI error: ${response.status} ${text}`);
-  }
-
-  const data = await response.json();
-  const output = data.choices?.[0]?.message?.content || "";
-  return output.trim();
 }
 
-export async function* callOpenAIStreaming(messages: Array<{ role: string; content: Array<{ type: "text"; text: string }> }>) {
+export async function* callOpenAIStreaming(messages: OpenAIMessages, options: OpenAIRequestOptions = {}) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("Missing OPENAI_API_KEY");
@@ -89,11 +90,8 @@ export async function* callOpenAIStreaming(messages: Array<{ role: string; conte
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: OPENAI_MODEL,
-      messages: messages,
+      ...buildChatCompletionBody(messages, options),
       stream: true,
-      // Add cache busting to ensure fresh responses
-      user: `user_${Date.now()}_${Math.random()}`,
     }),
   });
 
