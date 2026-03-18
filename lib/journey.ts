@@ -70,6 +70,7 @@ export type JourneyActiveLesson = {
   itemIndex: number;
   revealed: boolean;
   input: string;
+  hintCount: number;
   feedback: JourneyFeedback | null;
   repeatMode: JourneyRepeatMode;
   match: JourneyMatchState | null;
@@ -137,6 +138,17 @@ export const JOURNEY_MODE_LABELS: Record<JourneyMode, string> = {
 
 export const JOURNEY_STORAGE_KEY_PREFIX = "lingoarc_journey_state_";
 export const JOURNEY_STEP_ITEM_TARGET = 5;
+export const JOURNEY_EXTENDED_STEP_ITEM_TARGET = 8;
+
+export function getJourneyStepItemTarget(chapterId: string, partId: string) {
+  if (
+    chapterId === "basics-conversation" &&
+    ["pronouns", "to-be", "simple-statements", "yes-no-questions", "short-answers"].includes(partId)
+  ) {
+    return JOURNEY_EXTENDED_STEP_ITEM_TARGET;
+  }
+  return JOURNEY_STEP_ITEM_TARGET;
+}
 
 function createPart(
   id: string,
@@ -164,11 +176,11 @@ export const JOURNEY_CHAPTERS: JourneyChapterDefinition[] = [
     title: "Basics of Conversation",
     summary: "Build the first tiny sentence frames that everything else depends on.",
     parts: [
-      createPart("pronouns", 1, "Pronouns", "I, you, we, they in full sentences.", "Start using subject words naturally instead of memorizing them alone.", ["I am ready.", "You are here.", "We are late.", "They are busy."]),
-      createPart("to-be", 2, "To Be", "Am, are, is for simple identity and state sentences.", "Make calm everyday statements about who someone is or how they feel.", ["I am tired.", "She is happy.", "We are ready.", "They are at home."]),
-      createPart("simple-statements", 3, "Simple Statements", "Short clear statements with one idea.", "Say basic facts cleanly and without extra complexity.", ["I want coffee.", "We need water.", "He likes music.", "They live here."]),
-      createPart("yes-no-questions", 4, "Yes or No Questions", "Turn simple statements into easy questions.", "Ask direct everyday questions you can actually use right away.", ["Are you ready?", "Is it open?", "Do you want tea?", "Can we go now?"]),
-      createPart("short-answers", 5, "Short Answers", "Natural short replies.", "Answer quickly without sounding robotic or over-long.", ["Yes, I am.", "No, we are not.", "Yes, please.", "No, thank you."]),
+      createPart("pronouns", 1, "Pronouns", "I, you, he, she, it, we, you all, they in full sentences.", "Start using every core subject naturally instead of memorizing only a few of them.", ["I am ready.", "You are here.", "He is busy.", "She is at home.", "It is cold.", "We are late.", "You all are early.", "They are tired."]),
+      createPart("to-be", 2, "To Be", "Am, are, is across the full pronoun set.", "Make calm everyday state and identity sentences with every core subject form.", ["I am tired.", "You are ready.", "He is calm.", "She is happy.", "It is open.", "We are at home.", "You all are welcome.", "They are outside."]),
+      createPart("simple-statements", 3, "Simple Statements", "Short clear statements across all core subjects.", "Say basic facts cleanly with every common pronoun pattern, not just the easiest few.", ["I want coffee.", "You need water.", "He likes music.", "She lives here.", "It works now.", "We need help.", "You all know this.", "They live nearby."]),
+      createPart("yes-no-questions", 4, "Yes or No Questions", "Turn statements into easy questions across every core subject.", "Ask direct everyday questions with the full beginner pronoun set.", ["Am I early?", "Are you ready?", "Is he here?", "Is she busy?", "Is it open?", "Are we late?", "Are you all hungry?", "Are they inside?"]),
+      createPart("short-answers", 5, "Short Answers", "Natural short replies across the full pronoun set.", "Answer quickly and cleanly with all the basic subject forms you need early on.", ["Yes, I am.", "No, you are not.", "Yes, he is.", "No, she is not.", "Yes, it is.", "No, we are not.", "Yes, you all are.", "No, they are not."]),
     ],
   },
   {
@@ -390,6 +402,19 @@ export function matchesJourneyAnswer(submitted: string, expected: string, accept
     .includes(normalizedSubmitted);
 }
 
+function looksLikeJourneyAnswerLeak(text: string, answer: string) {
+  const normalizedText = normalizeJourneyAnswer(text);
+  const normalizedAnswer = normalizeJourneyAnswer(answer);
+  if (!normalizedText || !normalizedAnswer) {
+    return false;
+  }
+  return (
+    normalizedText === normalizedAnswer ||
+    normalizedText.includes(normalizedAnswer) ||
+    normalizedAnswer.includes(normalizedText)
+  );
+}
+
 function normalizeSentenceItem(source: unknown, fallbackId: string): JourneySentenceItem | null {
   const item = source as Partial<JourneySentenceItem> | null | undefined;
   const id = typeof item?.id === "string" && item.id.trim() ? item.id.trim() : fallbackId;
@@ -467,15 +492,17 @@ function normalizeUseItem(source: unknown): JourneyUseItem | null {
   const translation = typeof item?.translation === "string" ? cleanJourneyText(item.translation) : "";
   const answer = typeof item?.answer === "string" ? cleanJourneyTargetText(item.answer, translation) : "";
   const support = typeof item?.support === "string" ? cleanJourneyText(item.support) : "";
-  if (!situation || !prompt || !answer || !translation) {
+  const safePrompt = prompt && !looksLikeJourneyAnswerLeak(prompt, answer) ? prompt : "";
+  const safeSupport = support && !looksLikeJourneyAnswerLeak(support, answer) ? support : "";
+  if (!situation || !safePrompt || !answer || !translation) {
     return null;
   }
   return {
     situation,
-    prompt,
+    prompt: safePrompt,
     answer,
     translation,
-    support: support || undefined,
+    support: safeSupport || undefined,
     acceptedAnswers:
       normalizeAcceptedAnswers(rawItem?.acceptedAnswers, answer) ||
       normalizeAcceptedAnswers(rawItem?.accepted, answer) ||
@@ -520,8 +547,9 @@ export function normalizeJourneyLessonContent(source: unknown): JourneyLessonCon
   const useItems = useSource
     .map((item) => normalizeUseItem(item))
     .filter((item): item is JourneyUseItem => Boolean(item));
+  const targetCount = getJourneyStepItemTarget(chapterId, partId);
   const normalizedRepeatItems =
-    repeatItems.length >= JOURNEY_STEP_ITEM_TARGET
+    repeatItems.length >= targetCount
       ? repeatItems
       : readItems.map((item, index) => ({
           id: `repeat-${index + 1}`,
@@ -530,11 +558,11 @@ export function normalizeJourneyLessonContent(source: unknown): JourneyLessonCon
         }));
 
   if (
-    readItems.length < JOURNEY_STEP_ITEM_TARGET ||
-    normalizedRepeatItems.length < JOURNEY_STEP_ITEM_TARGET ||
-    changeItems.length < JOURNEY_STEP_ITEM_TARGET ||
-    buildItems.length < JOURNEY_STEP_ITEM_TARGET ||
-    useItems.length < JOURNEY_STEP_ITEM_TARGET
+    readItems.length < targetCount ||
+    normalizedRepeatItems.length < targetCount ||
+    changeItems.length < targetCount ||
+    buildItems.length < targetCount ||
+    useItems.length < targetCount
   ) {
     return null;
   }
@@ -551,11 +579,11 @@ export function normalizeJourneyLessonContent(source: unknown): JourneyLessonCon
       typeof lesson?.carryForwardNote === "string" && lesson.carryForwardNote.trim()
         ? lesson.carryForwardNote.trim()
         : undefined,
-    readItems: readItems.slice(0, JOURNEY_STEP_ITEM_TARGET),
-    repeatItems: normalizedRepeatItems.slice(0, JOURNEY_STEP_ITEM_TARGET),
-    changeItems: changeItems.slice(0, JOURNEY_STEP_ITEM_TARGET),
-    buildItems: buildItems.slice(0, JOURNEY_STEP_ITEM_TARGET),
-    useItems: useItems.slice(0, JOURNEY_STEP_ITEM_TARGET),
+    readItems: readItems.slice(0, targetCount),
+    repeatItems: normalizedRepeatItems.slice(0, targetCount),
+    changeItems: changeItems.slice(0, targetCount),
+    buildItems: buildItems.slice(0, targetCount),
+    useItems: useItems.slice(0, targetCount),
   };
 }
 
@@ -615,6 +643,7 @@ export function normalizeJourneySnapshot(activeLanguage: string, source: unknown
         itemIndex: Number.isFinite(lesson.itemIndex) ? Math.max(0, Number(lesson.itemIndex)) : 0,
         revealed: Boolean(lesson.revealed),
         input: typeof lesson.input === "string" ? lesson.input : "",
+        hintCount: Number.isFinite(lesson.hintCount) ? Math.max(0, Number(lesson.hintCount)) : 0,
         feedback:
           lesson.feedback &&
           typeof lesson.feedback === "object" &&
@@ -716,6 +745,7 @@ export function createJourneyActiveLesson(content: JourneyLessonContent): Journe
     itemIndex: 0,
     revealed: false,
     input: "",
+    hintCount: 0,
     feedback: null,
     repeatMode: "match",
     match: createJourneyMatchState(content.repeatItems),

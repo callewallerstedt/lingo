@@ -4058,9 +4058,33 @@ textarea {
   width: 100%;
   margin: 0 auto;
   min-height: calc(100vh - 150px);
+  height: max-content;
   padding: clamp(20px, 2vw, 28px);
   display: grid;
+  align-content: start;
+  justify-items: stretch;
   gap: 20px;
+  overflow: visible;
+}
+
+.journey-lesson-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 20px;
+  align-items: start;
+}
+
+.journey-lesson-main,
+.journey-lesson-sidebar {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.journey-lesson-sidebar {
+  align-content: start;
+  position: sticky;
+  top: 82px;
 }
 
 .journey-lesson-head {
@@ -4174,6 +4198,15 @@ textarea {
   letter-spacing: 0.02em;
 }
 
+.journey-blank-slot {
+  display: inline-block;
+  width: clamp(120px, 20vw, 170px);
+  margin: 0 0.18em;
+  border-bottom: 3px solid currentColor;
+  vertical-align: middle;
+  transform: translateY(-0.05em);
+}
+
 .journey-card-target {
   font-size: clamp(22px, 3.6vw, 32px);
   line-height: 1.2;
@@ -4205,6 +4238,11 @@ textarea {
 .journey-lesson-actions {
   width: min(100%, 860px);
   margin: 0 auto;
+}
+
+.journey-answer-area,
+.journey-lesson-actions {
+  align-self: start;
 }
 
 .journey-repeat-head {
@@ -4264,6 +4302,24 @@ textarea {
 .journey-answer-area {
   display: grid;
   gap: 10px;
+}
+
+.journey-input-wrap {
+  width: min(100%, 860px);
+  margin: 0 auto;
+}
+
+.journey-input-wrap input,
+.journey-input-wrap textarea {
+  width: 100%;
+}
+
+.journey-input-wrap textarea {
+  min-height: 110px;
+}
+
+.journey-lesson-tip-card {
+  background: color-mix(in srgb, var(--card-bg-strong) 84%, var(--card-highlight) 16%);
 }
 
 .journey-choice-helper {
@@ -4345,6 +4401,15 @@ textarea {
 
   .journey-lesson-copy {
     grid-template-columns: 1fr;
+  }
+
+  .journey-lesson-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .journey-lesson-sidebar {
+    position: static;
+    order: 2;
   }
 
   .journey-part-row {

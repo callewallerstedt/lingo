@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import type { Difficulty } from "../lib/store";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
@@ -45,6 +45,7 @@ import {
   getJourneyNextPart,
   getJourneyPart,
   getJourneyPartKey,
+  getJourneyStepItemTarget,
   matchesJourneyAnswer,
   normalizeJourneyAnswer,
   normalizeJourneyLessonContent,
@@ -71,28 +72,40 @@ function extractJourneyOptionTokens(text: string) {
 
 const JOURNEY_TOTAL_PARTS = JOURNEY_CHAPTERS.reduce((sum, chapter) => sum + chapter.parts.length, 0);
 
-const JOURNEY_STEP_PREVIEW_COPY: Record<JourneyStepId, { title: string; description: string }> = {
-  read: {
-    title: "See the pattern",
-    description: `Read ${JOURNEY_STEP_ITEM_TARGET} short examples that establish one clean reusable pattern.`,
-  },
-  repeat: {
-    title: "Repeat it back",
-    description: `Match and type the same ${JOURNEY_STEP_ITEM_TARGET} core sentences until they feel automatic.`,
-  },
-  change: {
-    title: "Swap one piece",
-    description: `Change one part at a time across ${JOURNEY_STEP_ITEM_TARGET} guided sentence variations.`,
-  },
-  build: {
-    title: "Build the full line",
-    description: `Build ${JOURNEY_STEP_ITEM_TARGET} full sentences from compact English cues.`,
-  },
-  use: {
-    title: "Use it in context",
-    description: `Answer ${JOURNEY_STEP_ITEM_TARGET} tiny real-life prompts with natural target-language replies.`,
-  },
-};
+function buildJourneyStepPreviewCopy(itemCount: number): Record<JourneyStepId, { title: string; description: string }> {
+  return {
+    read: {
+      title: "See the pattern",
+      description: `Read ${itemCount} short examples that establish one clean reusable pattern.`,
+    },
+    repeat: {
+      title: "Repeat it back",
+      description: `Match and type the same ${itemCount} core sentences until they feel automatic.`,
+    },
+    change: {
+      title: "Swap one piece",
+      description: `Change one part at a time across ${itemCount} guided sentence variations.`,
+    },
+    build: {
+      title: "Build the full line",
+      description: `Build ${itemCount} full sentences from compact English cues.`,
+    },
+    use: {
+      title: "Use it in context",
+      description: `Answer ${itemCount} tiny real-life prompts with natural target-language replies.`,
+    },
+  };
+}
+
+function renderJourneyTemplateWithBlank(template: string) {
+  const parts = template.split("___");
+  return parts.map((part, index) => (
+    <Fragment key={`${part}-${index}`}>
+      {part}
+      {index < parts.length - 1 ? <span className="journey-blank-slot" aria-hidden="true" /> : null}
+    </Fragment>
+  ));
+}
 
 type QuickChatLayout = {
   left: number;
@@ -3813,6 +3826,23 @@ export default function Home() {
     });
   }
 
+  function buildJourneyHintGlyphs(answer: string, revealCount: number) {
+    const display = getSurgeHintDisplay(answer);
+    let revealed = 0;
+    return Array.from(display).map((char) => {
+      const isLetter = /[\p{L}\p{N}]/u.test(char);
+      if (!isLetter) {
+        return { char, revealed: true, isLetter: false };
+      }
+      revealed += 1;
+      return {
+        char: revealed <= revealCount ? char : "\u2022",
+        revealed: revealed <= revealCount,
+        isLetter: true,
+      };
+    });
+  }
+
   function normalizeWord(word: string) {
     return word
       .toLocaleLowerCase()
@@ -4660,7 +4690,7 @@ export default function Home() {
     }));
   }
 
-  async function openJourneyPart(chapterId: string, partId: string, forceRestart = false) {
+  async function openJourneyPart(chapterId: string, partId: string, forceRestart = false, forceRegenerate = false) {
     const chapter = getJourneyChapter(chapterId);
     const part = getJourneyPart(chapterId, partId);
     if (!language || !chapter || !part) return;
@@ -4669,7 +4699,7 @@ export default function Home() {
     setJourneyError(null);
 
     const partKey = getJourneyPartKey(chapterId, partId);
-    let lesson = journeyStateRef.current?.contentCache[partKey] || null;
+    let lesson = forceRegenerate ? null : journeyStateRef.current?.contentCache[partKey] || null;
 
     try {
       if (!lesson) {
@@ -4716,6 +4746,29 @@ export default function Home() {
   async function restartJourneyPart() {
     if (!activeJourneyContent) return;
     await openJourneyPart(activeJourneyContent.chapterId, activeJourneyContent.partId, true);
+  }
+
+  async function regenerateJourneyPart(chapterId: string, partId: string) {
+    await openJourneyPart(chapterId, partId, true, true);
+  }
+
+  function resetJourneyProgress() {
+    if (!language) return;
+    setJourneyError(null);
+    mutateJourneyState((state) => {
+      const selectedChapterId = state.selectedChapterId || JOURNEY_CHAPTERS[0]?.id || null;
+      const selectedPartId =
+        selectedChapterId && state.selectedPartId && getJourneyPart(selectedChapterId, state.selectedPartId)
+          ? state.selectedPartId
+          : selectedChapterId
+            ? getJourneyChapter(selectedChapterId)?.parts[0]?.id || null
+            : null;
+      return {
+        ...createEmptyJourneyState(language),
+        selectedChapterId,
+        selectedPartId,
+      };
+    });
   }
 
   function closeJourneyLesson() {
@@ -4780,6 +4833,7 @@ export default function Home() {
               completed: true,
               feedback: null,
               input: "",
+              hintCount: 0,
               revealed: true,
             }
           : null,
@@ -4853,6 +4907,7 @@ export default function Home() {
                 repeatMode: "type",
                 itemIndex: 0,
                 input: "",
+                hintCount: 0,
                 feedback: null,
                 match: nextMatch,
               }
@@ -4941,6 +4996,23 @@ export default function Home() {
     submitJourneyValue(activeJourneyLesson.input);
   }
 
+  function revealJourneyBuildHint() {
+    if (!activeJourneyLesson || activeJourneyLesson.step !== "build" || activeJourneyLesson.feedback || !currentJourneyBuildItem) {
+      return;
+    }
+
+    mutateJourneyState((state) => ({
+      ...state,
+      activeLesson:
+        state.activeLesson && state.activeLesson.step === "build"
+          ? {
+              ...state.activeLesson,
+              hintCount: Math.min(state.activeLesson.hintCount + 1, currentJourneyBuildHintTotal),
+            }
+          : state.activeLesson,
+    }));
+  }
+
   function continueJourneyAnswer() {
     if (!activeJourneyLesson || !activeJourneyContent || !activeJourneyLesson.feedback) return;
     const step = activeJourneyLesson.step;
@@ -4984,6 +5056,7 @@ export default function Home() {
             ...state.activeLesson,
             itemIndex: state.activeLesson.itemIndex + 1,
             input: "",
+            hintCount: 0,
             feedback: null,
           }
         : null,
@@ -6293,6 +6366,52 @@ export default function Home() {
     activeJourneyLesson && activeJourneyContent && activeJourneyLesson.step === "use"
       ? activeJourneyContent.useItems[activeJourneyLesson.itemIndex] || null
       : null;
+  const currentJourneyBuildHintAnswer = useMemo(
+    () => (currentJourneyBuildItem ? getSurgeHintDisplay(currentJourneyBuildItem.answer) : ""),
+    [currentJourneyBuildItem]
+  );
+  const currentJourneyBuildHintGlyphs = useMemo(
+    () =>
+      buildJourneyHintGlyphs(
+        currentJourneyBuildHintAnswer,
+        activeJourneyLesson?.step === "build" ? activeJourneyLesson.hintCount : 0
+      ),
+    [activeJourneyLesson?.hintCount, activeJourneyLesson?.step, currentJourneyBuildHintAnswer]
+  );
+  const currentJourneyBuildHintTotal = useMemo(
+    () => currentJourneyBuildHintGlyphs.filter((glyph) => glyph.isLetter).length,
+    [currentJourneyBuildHintGlyphs]
+  );
+  const currentJourneyChangeCopy = useMemo(() => {
+    if (!currentJourneyChangeItem) {
+      return { primary: "", secondary: "" };
+    }
+
+    const cue = currentJourneyChangeItem.cue.trim();
+    const translation = currentJourneyChangeItem.translation.trim();
+    const normalizedCue = normalizeJourneyAnswer(cue);
+    const normalizedTranslation = normalizeJourneyAnswer(translation);
+    const hasGenericCue = normalizedCue === "fill the blank" || normalizedCue.startsWith("fill the blank ");
+
+    if (!cue || hasGenericCue) {
+      return {
+        primary: translation,
+        secondary: "",
+      };
+    }
+
+    if (!translation || normalizedCue === normalizedTranslation) {
+      return {
+        primary: cue,
+        secondary: "",
+      };
+    }
+
+    return {
+      primary: cue,
+      secondary: translation,
+    };
+  }, [currentJourneyChangeItem]);
   const selectedJourneyPartKey =
     selectedJourneyChapter && selectedJourneyPart
       ? getJourneyPartKey(selectedJourneyChapter.id, selectedJourneyPart.id)
@@ -6327,6 +6446,21 @@ export default function Home() {
       : selectedJourneySuggestedProgress?.status === "started"
         ? `Continue part ${selectedJourneySuggestedPart.index}`
         : `Start part ${selectedJourneySuggestedPart.index}`;
+  const selectedJourneyItemTarget =
+    selectedJourneyChapter && selectedJourneyPart
+      ? getJourneyStepItemTarget(selectedJourneyChapter.id, selectedJourneyPart.id)
+      : JOURNEY_STEP_ITEM_TARGET;
+  const activeJourneyItemTarget = activeJourneyLesson
+    ? getJourneyStepItemTarget(activeJourneyLesson.chapterId, activeJourneyLesson.partId)
+    : selectedJourneyItemTarget;
+  const selectedJourneyStepPreviewCopy = useMemo(
+    () => buildJourneyStepPreviewCopy(selectedJourneyItemTarget),
+    [selectedJourneyItemTarget]
+  );
+  const activeJourneyStepPreviewCopy = useMemo(
+    () => buildJourneyStepPreviewCopy(activeJourneyItemTarget),
+    [activeJourneyItemTarget]
+  );
   const activeJourneyStepNumber = activeJourneyLesson
     ? Math.max(1, JOURNEY_STEP_ORDER.indexOf(activeJourneyLesson.step) + 1)
     : 0;
@@ -6506,7 +6640,7 @@ export default function Home() {
                   <div className="journey-practice-translation">{currentJourneyRepeatItem.translation}</div>
                 </div>
                 <div className="journey-answer-area">
-                  <div className="surge-input-wrap">
+                  <div className="surge-input-wrap journey-input-wrap">
                     <input
                       ref={(node) => {
                         journeyInputRef.current = node;
@@ -6575,9 +6709,15 @@ export default function Home() {
               <>
                 <div className="journey-practice-card">
                   <div className="journey-card-label">Change one part</div>
-                  <div className="journey-practice-source blank">{currentJourneyChangeItem.template}</div>
-                  <div className="journey-practice-translation">{currentJourneyChangeItem.cue}</div>
-                  <div className="journey-practice-support">{currentJourneyChangeItem.translation}</div>
+                  <div className="journey-practice-source blank">
+                    {renderJourneyTemplateWithBlank(currentJourneyChangeItem.template)}
+                  </div>
+                  {currentJourneyChangeCopy.primary ? (
+                    <div className="journey-practice-translation">{currentJourneyChangeCopy.primary}</div>
+                  ) : null}
+                  {currentJourneyChangeCopy.secondary ? (
+                    <div className="journey-practice-support">{currentJourneyChangeCopy.secondary}</div>
+                  ) : null}
                   {currentJourneyChangeOptions.length ? (
                     <div className="journey-option-row">
                       {currentJourneyChangeOptions.map((option) => (
@@ -6623,13 +6763,10 @@ export default function Home() {
               <>
                 <div className="journey-practice-card">
                   <div className="journey-card-label">Build the sentence</div>
-                  <div className="journey-build-cue">{currentJourneyBuildItem.cue}</div>
-                  <div className="journey-practice-support">
-                    {currentJourneyBuildItem.support || currentJourneyBuildItem.translation}
-                  </div>
+                  <div className="journey-card-translation">{currentJourneyBuildItem.translation}</div>
                 </div>
                 <div className="journey-answer-area">
-                  <div className="surge-input-wrap">
+                  <div className="surge-input-wrap journey-input-wrap">
                     <input
                       ref={(node) => {
                         journeyInputRef.current = node;
@@ -6656,8 +6793,38 @@ export default function Home() {
                       placeholder={`Write the full ${targetLabel} sentence`}
                     />
                   </div>
+                  {activeJourneyLesson.hintCount > 0 && !activeJourneyLesson.feedback ? (
+                    <div className="surge-hint">
+                      <div className="surge-hint-top">
+                        <span>Hint</span>
+                        <span>
+                          {Math.min(activeJourneyLesson.hintCount, currentJourneyBuildHintTotal)}/
+                          {currentJourneyBuildHintTotal}
+                        </span>
+                      </div>
+                      <div className="surge-hint-track">
+                        <span
+                          style={{
+                            width: currentJourneyBuildHintTotal
+                              ? `${(Math.min(activeJourneyLesson.hintCount, currentJourneyBuildHintTotal) / currentJourneyBuildHintTotal) * 100}%`
+                              : "0%",
+                          }}
+                        />
+                      </div>
+                      <div className="surge-hint-mask" aria-live="polite">
+                        {currentJourneyBuildHintGlyphs.map((glyph, index) => (
+                          <span
+                            key={`${glyph.char}-${index}`}
+                            className={`surge-hint-chip${glyph.isLetter ? " letter" : " spacer"}${glyph.revealed ? " revealed" : ""}`}
+                          >
+                            {glyph.char === " " ? "\u00A0" : glyph.char}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   {!activeJourneyLesson.feedback ? (
-                    <div className="journey-choice-helper">Build the whole sentence, not just the missing piece.</div>
+                    <div className="journey-choice-helper">Build the whole sentence. Use Hint if you need one letter at a time.</div>
                   ) : null}
                   {activeJourneyLesson.feedback ? (
                     <div className={`journey-feedback ${activeJourneyLesson.feedback.status}`}>
@@ -6677,6 +6844,19 @@ export default function Home() {
                   >
                     Pronounce
                   </button>
+                  {!activeJourneyLesson.feedback ? (
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={revealJourneyBuildHint}
+                      disabled={
+                        !currentJourneyBuildHintTotal ||
+                        activeJourneyLesson.hintCount >= currentJourneyBuildHintTotal
+                      }
+                    >
+                      Hint
+                    </button>
+                  ) : null}
                   {!activeJourneyLesson.feedback || activeJourneyLesson.feedback.status === "wrong" ? (
                     <button
                       type="button"
@@ -6700,12 +6880,9 @@ export default function Home() {
                   <div className="journey-card-label">Use it</div>
                   <div className="journey-use-situation">{currentJourneyUseItem.situation}</div>
                   <div className="journey-use-prompt">{currentJourneyUseItem.prompt}</div>
-                  {currentJourneyUseItem.support ? (
-                    <div className="journey-practice-support">{currentJourneyUseItem.support}</div>
-                  ) : null}
                 </div>
                 <div className="journey-answer-area">
-                  <div className="surge-input-wrap">
+                  <div className="surge-input-wrap journey-input-wrap">
                     <textarea
                       ref={(node) => {
                         journeyInputRef.current = node;
@@ -6737,8 +6914,7 @@ export default function Home() {
                   ) : null}
                   {activeJourneyLesson.feedback ? (
                     <div className={`journey-feedback ${activeJourneyLesson.feedback.status}`}>
-                      <span>{activeJourneyLesson.feedback.status === "correct" ? "Usable." : "A strong model answer is below."}</span>
-                      <strong>{activeJourneyLesson.feedback.expected}</strong>
+                      <span>{activeJourneyLesson.feedback.status === "correct" ? "Usable." : "Keep it short, natural, and on the exact idea."}</span>
                       {activeJourneyLesson.feedback.note ? (
                         <span className="journey-feedback-note">{activeJourneyLesson.feedback.note}</span>
                       ) : null}
@@ -7017,6 +7193,14 @@ export default function Home() {
               {journeyRecommendation.label}
             </button>
           ) : null}
+          <button
+            type="button"
+            className="ghost"
+            onClick={resetJourneyProgress}
+            disabled={!language || journeyLoading}
+          >
+            Reset journey
+          </button>
           <div className="journey-stat-chip">
             <strong>{journeyCompletedCount}/{JOURNEY_TOTAL_PARTS}</strong>
             <span>completed</span>
@@ -7059,6 +7243,13 @@ export default function Home() {
               <div className="journey-focus-meta">
                 {activeJourneyLesson.completed ? "Saved" : JOURNEY_STEP_LABELS[activeJourneyLesson.step]}
               </div>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => void regenerateJourneyPart(activeJourneyContent.chapterId, activeJourneyContent.partId)}
+              >
+                Regenerate
+              </button>
               <button type="button" className="ghost" onClick={() => void restartJourneyPart()}>
                 Restart
               </button>
@@ -7069,36 +7260,40 @@ export default function Home() {
             {activeJourneyLesson.completed ? (
               journeyLessonStepContent
             ) : (
-              <>
-                <div className="journey-lesson-head">
-                  <div>
-                    <span className="journey-panel-kicker">
-                      Step {activeJourneyStepNumber} of {JOURNEY_STEP_ORDER.length}
-                    </span>
-                    <h3>{selectedJourneyPart?.title}</h3>
-                    <p className="journey-lesson-subtitle">
-                      {JOURNEY_STEP_PREVIEW_COPY[activeJourneyLesson.step].description}
-                    </p>
+              <div className="journey-lesson-layout">
+                <div className="journey-lesson-main">
+                  <div className="journey-lesson-head">
+                    <div>
+                      <span className="journey-panel-kicker">
+                        Step {activeJourneyStepNumber} of {JOURNEY_STEP_ORDER.length}
+                      </span>
+                      <h3>{selectedJourneyPart?.title}</h3>
+                      <p className="journey-lesson-subtitle">
+                        {activeJourneyStepPreviewCopy[activeJourneyLesson.step].description}
+                      </p>
+                    </div>
+                    <div className="journey-lesson-badge">{JOURNEY_STEP_LABELS[activeJourneyLesson.step]}</div>
                   </div>
-                  <div className="journey-lesson-badge">{JOURNEY_STEP_LABELS[activeJourneyLesson.step]}</div>
+
+                  <div className="journey-step-track">
+                    {JOURNEY_STEP_ORDER.map((step) => {
+                      const done = activeJourneyProgress?.completedSteps.includes(step);
+                      const active = activeJourneyLesson.step === step;
+                      return (
+                        <div
+                          key={step}
+                          className={`journey-step-pill${done ? " done" : ""}${active ? " active" : ""}`}
+                        >
+                          <span>{JOURNEY_STEP_LABELS[step]}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {journeyLessonStepContent}
                 </div>
 
-                <div className="journey-step-track">
-                  {JOURNEY_STEP_ORDER.map((step) => {
-                    const done = activeJourneyProgress?.completedSteps.includes(step);
-                    const active = activeJourneyLesson.step === step;
-                    return (
-                      <div
-                        key={step}
-                        className={`journey-step-pill${done ? " done" : ""}${active ? " active" : ""}`}
-                      >
-                        <span>{JOURNEY_STEP_LABELS[step]}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="journey-lesson-copy">
+                <aside className="journey-lesson-sidebar">
                   <div className="journey-lesson-copy-card">
                     <span className="journey-panel-kicker">Goal</span>
                     <div>{activeJourneyContent.summary || selectedJourneyPart?.summary}</div>
@@ -7107,14 +7302,14 @@ export default function Home() {
                     <span className="journey-panel-kicker">Focus</span>
                     <div>{activeJourneyContent.grammarFocus}</div>
                   </div>
-                </div>
-
-                {activeJourneyContent.carryForwardNote ? (
-                  <div className="journey-carry-note">{activeJourneyContent.carryForwardNote}</div>
-                ) : null}
-
-                {journeyLessonStepContent}
-              </>
+                  {activeJourneyContent.carryForwardNote ? (
+                    <div className="journey-lesson-copy-card journey-lesson-tip-card">
+                      <span className="journey-panel-kicker">Tip</span>
+                      <div>{activeJourneyContent.carryForwardNote}</div>
+                    </div>
+                  ) : null}
+                </aside>
+              </div>
             )}
           </section>
         </section>
@@ -7310,6 +7505,14 @@ export default function Home() {
                     <div className="journey-preview-actions">
                       <button
                         type="button"
+                        className="ghost"
+                        onClick={() => void regenerateJourneyPart(selectedJourneyChapter.id, selectedJourneyPart.id)}
+                        disabled={!language || journeyLoading}
+                      >
+                        Regenerate part
+                      </button>
+                      <button
+                        type="button"
                         className="solid"
                         onClick={() => void openJourneyPart(selectedJourneyChapter.id, selectedJourneyPart.id)}
                         disabled={!language || journeyLoading}
@@ -7327,8 +7530,8 @@ export default function Home() {
                           <div key={step} className="journey-preview-step">
                             <span className="journey-preview-step-index">{index + 1}</span>
                             <div className="journey-preview-step-copy">
-                              <strong>{JOURNEY_STEP_PREVIEW_COPY[step].title}</strong>
-                              <span>{JOURNEY_STEP_PREVIEW_COPY[step].description}</span>
+                              <strong>{selectedJourneyStepPreviewCopy[step].title}</strong>
+                              <span>{selectedJourneyStepPreviewCopy[step].description}</span>
                             </div>
                           </div>
                         ))}

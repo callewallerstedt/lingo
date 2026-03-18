@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { OPENAI_HEAVY_MODEL, callOpenAI } from "../../lib/openai";
 import {
-  JOURNEY_STEP_ITEM_TARGET,
+  getJourneyStepItemTarget,
   getJourneyPart,
   normalizeJourneyAnswer,
   normalizeJourneyLessonContent,
@@ -12,10 +12,23 @@ import {
   type JourneyUseItem,
 } from "../../lib/journey";
 
-const JOURNEY_GENERATION_ITEM_COUNT = JOURNEY_STEP_ITEM_TARGET + 1;
 const JOURNEY_MAX_ATTEMPTS = 2;
 const JOURNEY_OPTION_LIMIT = 6;
 const JOURNEY_ACCEPTED_ANSWER_LIMIT = 3;
+
+function getJourneyGenerationItemCount(targetCount: number) {
+  return targetCount + 1;
+}
+
+function getJourneyCoverageInstruction(chapterId: string, partId: string) {
+  if (
+    chapterId === "basics-conversation" &&
+    ["pronouns", "to-be", "simple-statements", "yes-no-questions", "short-answers"].includes(partId)
+  ) {
+    return "For every list, cover the full subject set in a natural way: I, you, he, she, it, we, you all, they. Do not skip any of them.";
+  }
+  return "";
+}
 
 type RawSentenceItem = {
   id?: string;
@@ -172,6 +185,19 @@ function normalizeAcceptedAnswers(source: unknown, primary: string, translation 
   return accepted.length ? accepted : undefined;
 }
 
+function looksLikeAnswerLeak(text: string, answer: string) {
+  const normalizedText = normalizeJourneyAnswer(text);
+  const normalizedAnswer = normalizeJourneyAnswer(answer);
+  if (!normalizedText || !normalizedAnswer) {
+    return false;
+  }
+  return (
+    normalizedText === normalizedAnswer ||
+    normalizedText.includes(normalizedAnswer) ||
+    normalizedAnswer.includes(normalizedText)
+  );
+}
+
 function uniqueItems<T>(items: T[], keyForItem: (item: T) => string, limit: number) {
   const seen = new Set<string>();
   const unique: T[] = [];
@@ -312,17 +338,19 @@ function toUseItem(item: RawUseItem | null | undefined): JourneyUseItem | null {
         ? cleanLessonText(item.hint.trim())
         : "";
   const normalizedAnswer = cleanTargetText(answer, translation);
+  const safePrompt = prompt && !looksLikeAnswerLeak(prompt, normalizedAnswer) ? prompt : "";
+  const safeSupport = support && !looksLikeAnswerLeak(support, normalizedAnswer) ? support : "";
 
-  if (!situation || !prompt || !normalizedAnswer || !translation) {
+  if (!situation || !safePrompt || !normalizedAnswer || !translation) {
     return null;
   }
 
   return {
     situation,
-    prompt,
+    prompt: safePrompt,
     answer: normalizedAnswer,
     translation,
-    support: support || undefined,
+    support: safeSupport || undefined,
     acceptedAnswers:
       normalizeAcceptedAnswers(item?.acceptedAnswers, normalizedAnswer, translation) ||
       normalizeAcceptedAnswers(item?.accepted, normalizedAnswer, translation) ||
@@ -331,18 +359,18 @@ function toUseItem(item: RawUseItem | null | undefined): JourneyUseItem | null {
   };
 }
 
-function finalizeSentenceItems(items: JourneySentenceItem[], prefix: string) {
+function finalizeSentenceItems(items: JourneySentenceItem[], prefix: string, limit: number) {
   return uniqueItems(
     items,
     (item) => `${normalizeJourneyAnswer(item.target)}::${item.translation.toLocaleLowerCase()}`,
-    JOURNEY_STEP_ITEM_TARGET
+    limit
   ).map((item, index) => ({
     ...item,
     id: `${prefix}-${index + 1}`,
   }));
 }
 
-function finalizeChangeItems(items: JourneyChangeItem[]) {
+function finalizeChangeItems(items: JourneyChangeItem[], limit: number) {
   return uniqueItems(
     items.map((item) => {
       const answerKey = normalizeJourneyAnswer(item.answer);
@@ -360,35 +388,39 @@ function finalizeChangeItems(items: JourneyChangeItem[]) {
       };
     }),
     (item) => normalizeJourneyAnswer(item.template.replace("___", item.answer)),
-    JOURNEY_STEP_ITEM_TARGET
+    limit
   ).map((item, index) => ({
     ...item,
     id: `change-${index + 1}`,
   }));
 }
 
-function finalizeBuildItems(items: JourneyBuildItem[]) {
-  return uniqueItems(items, (item) => normalizeJourneyAnswer(item.answer), JOURNEY_STEP_ITEM_TARGET).map((item, index) => ({
+function finalizeBuildItems(items: JourneyBuildItem[], limit: number) {
+  return uniqueItems(items, (item) => normalizeJourneyAnswer(item.answer), limit).map((item, index) => ({
     ...item,
     id: `build-${index + 1}`,
   }));
 }
 
-function finalizeUseItems(items: JourneyUseItem[]) {
+function finalizeUseItems(items: JourneyUseItem[], limit: number) {
   return uniqueItems(
     items,
     (item) => `${cleanLessonText(item.prompt).toLocaleLowerCase()}::${normalizeJourneyAnswer(item.answer)}`,
-    JOURNEY_STEP_ITEM_TARGET
+    limit
   );
 }
 
 function buildJourneyPrompt(
   language: string,
   difficulty: string,
+  chapterId: string,
   part: NonNullable<ReturnType<typeof getJourneyPart>>,
   reviewList: Array<{ target: string; translation: string }>,
+  targetCount: number,
   attempt: number
 ) {
+  const generationCount = getJourneyGenerationItemCount(targetCount);
+  const coverageInstruction = getJourneyCoverageInstruction(chapterId, part.id);
   return [
     {
       role: "system",
@@ -404,12 +436,15 @@ function buildJourneyPrompt(
             "Do not output duplicate target-language sentences inside any list.",
             "The app creates repeat practice from readItems, so do not output repeatItems.",
             "Every cue and prompt must match the exact expected answer. Do not ask for extra information that the answer does not say.",
+            "For changeItems and buildItems, the cue must be a short English task instruction, not a duplicate of the translation line.",
             "If the English translation is a question, the target-language sentence must also be a question.",
             "changeItems must blank only one short chunk from a sentence pattern already taught in readItems.",
             "In changeItems, blank the content chunk that changes the meaning. Do not blank generic subject pronouns or helper words unless the part is specifically about those forms.",
             "buildItems must be solvable using only the lesson material already introduced.",
             "useItems must be tiny realistic situations with one strong answer and optional natural alternatives.",
+            "In useItems, situation, prompt, and support must stay in English and must never include the exact target-language answer or a starter chunk from it.",
             "For buildItems and useItems, include acceptedAnswers only when there are other short natural phrasings that genuinely fit.",
+            coverageInstruction,
             attempt > 0
               ? "Retry fix: the last draft had duplicates, not enough usable items, or cue-answer mismatches. Fix those problems."
               : "",
@@ -439,10 +474,10 @@ function buildJourneyPrompt(
                   .join("\n")}`
               : "Previous patterns to weave in lightly: none",
             "Requirements:",
-            `- ${JOURNEY_GENERATION_ITEM_COUNT} readItems`,
-            `- ${JOURNEY_GENERATION_ITEM_COUNT} changeItems`,
-            `- ${JOURNEY_GENERATION_ITEM_COUNT} buildItems`,
-            `- ${JOURNEY_GENERATION_ITEM_COUNT} useItems`,
+            `- ${generationCount} readItems`,
+            `- ${generationCount} changeItems`,
+            `- ${generationCount} buildItems`,
+            `- ${generationCount} useItems`,
             "- Order each list from easiest to slightly more flexible",
             "- readItems should establish the base pattern cleanly",
             "- changeItems should swap only one meaningful chunk at a time",
@@ -450,6 +485,7 @@ function buildJourneyPrompt(
             "- useItems should feel like tiny real-life moments, not abstract grammar drills",
             "- Keep cues in plain English and make them specific",
             "- Keep target-language answers short, natural, and beginner-friendly",
+            coverageInstruction ? `- ${coverageInstruction}` : "",
             "- No duplicate sentences or near-duplicate prompts",
           ].join("\n\n"),
         },
@@ -462,18 +498,22 @@ function buildLessonFromReply(
   reply: string,
   chapterId: string,
   partId: string,
-  part: NonNullable<ReturnType<typeof getJourneyPart>>
+  part: NonNullable<ReturnType<typeof getJourneyPart>>,
+  targetCount: number
 ) {
   const parsed = safeJsonParse<RawJourneyLesson>(reply);
   const readItems = finalizeSentenceItems(
     (parsed?.readItems || parsed?.read || []).map(toSentenceItem).filter(Boolean) as JourneySentenceItem[],
-    "read"
+    "read",
+    targetCount
   );
   const changeItems = finalizeChangeItems(
-    (parsed?.changeItems || parsed?.change || []).map(toChangeItem).filter(Boolean) as JourneyChangeItem[]
+    (parsed?.changeItems || parsed?.change || []).map(toChangeItem).filter(Boolean) as JourneyChangeItem[],
+    targetCount
   );
   const buildItems = finalizeBuildItems(
-    (parsed?.buildItems || parsed?.build || []).map(toBuildItem).filter(Boolean) as JourneyBuildItem[]
+    (parsed?.buildItems || parsed?.build || []).map(toBuildItem).filter(Boolean) as JourneyBuildItem[],
+    targetCount
   );
   const rawUseItems = Array.isArray(parsed?.useItems)
     ? parsed.useItems
@@ -484,7 +524,10 @@ function buildLessonFromReply(
         : parsed?.use
           ? [parsed.use]
           : [];
-  const useItems = finalizeUseItems(rawUseItems.map((item) => toUseItem(item)).filter(Boolean) as JourneyUseItem[]);
+  const useItems = finalizeUseItems(
+    rawUseItems.map((item) => toUseItem(item)).filter(Boolean) as JourneyUseItem[],
+    targetCount
+  );
   const repeatItems = readItems.map((item, index) => ({
     id: `repeat-${index + 1}`,
     target: item.target,
@@ -551,13 +594,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         )
         .slice(-10)
     : [];
+  const targetCount = getJourneyStepItemTarget(String(chapterId), String(partId));
 
   let lastReply = "";
 
   try {
     for (let attempt = 0; attempt < JOURNEY_MAX_ATTEMPTS; attempt += 1) {
       const reply = await callOpenAI(
-        buildJourneyPrompt(String(language), String(difficulty || "easy"), part, reviewList, attempt),
+        buildJourneyPrompt(String(language), String(difficulty || "easy"), String(chapterId), part, reviewList, targetCount, attempt),
         {
           model: OPENAI_HEAVY_MODEL,
           reasoningEffort: "low",
@@ -567,7 +611,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       );
       lastReply = reply;
 
-      const lesson = buildLessonFromReply(reply, String(chapterId), String(partId), part);
+      const lesson = buildLessonFromReply(reply, String(chapterId), String(partId), part, targetCount);
       if (lesson) {
         res.json({ lesson });
         return;
