@@ -59,6 +59,13 @@ const BUDDY_STATE_KEY_PREFIX = "lingoarc_buddy_state_";
 const QUICK_CHAT_STATE_KEY_PREFIX = "lingoarc_quick_chat_";
 const QUICK_CHAT_LAYOUT_KEY = "lingoarc_quick_chat_layout";
 
+function extractJourneyOptionTokens(text: string) {
+  return text
+    .split(/[^\p{L}\p{N}'-]+/u)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1 && token.length < 28);
+}
+
 type QuickChatLayout = {
   left: number;
   top: number;
@@ -4827,9 +4834,7 @@ export default function Home() {
 
     const correct = matchesSurgeAnswer(submitted, expected, "target");
     const note =
-      activeJourneyLesson.step === "change"
-        ? "Type only the missing part."
-        : activeJourneyLesson.step === "use"
+      activeJourneyLesson.step === "use"
           ? "One strong real-life answer is enough here."
           : undefined;
 
@@ -6161,6 +6166,40 @@ export default function Home() {
     activeJourneyLesson && activeJourneyContent && activeJourneyLesson.step === "change"
       ? activeJourneyContent.changeItems[activeJourneyLesson.itemIndex] || null
       : null;
+  const currentJourneyChangeOptions = useMemo(() => {
+    if (!currentJourneyChangeItem || !activeJourneyContent) {
+      return [];
+    }
+
+    const answer = currentJourneyChangeItem.answer.trim();
+    const phraseCandidates = [
+      ...(currentJourneyChangeItem.options || []),
+      ...activeJourneyContent.changeItems.flatMap((item) => [item.answer, ...(item.options || [])]),
+    ]
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    const tokenCandidates = [
+      ...activeJourneyContent.readItems.map((item) => item.target),
+      ...activeJourneyContent.repeatItems.map((item) => item.target),
+      ...activeJourneyContent.changeItems.map((item) => item.template.replace("___", item.answer)),
+      ...activeJourneyContent.buildItems.map((item) => item.answer),
+      activeJourneyContent.useItem.answer,
+    ].flatMap(extractJourneyOptionTokens);
+
+    const seen = new Set<string>();
+    const normalizedAnswer = normalizeSurgeAnswer(answer, "target");
+    const distractors = [...phraseCandidates, ...tokenCandidates].filter((value) => {
+      const normalized = normalizeSurgeAnswer(value, "target");
+      if (!normalized || normalized === normalizedAnswer || seen.has(normalized)) {
+        return false;
+      }
+      seen.add(normalized);
+      return true;
+    });
+
+    return shuffleList([answer, ...shuffleList(distractors).slice(0, 5)]);
+  }, [activeJourneyContent, currentJourneyChangeItem]);
   const currentJourneyBuildItem =
     activeJourneyLesson && activeJourneyContent && activeJourneyLesson.step === "build"
       ? activeJourneyContent.buildItems[activeJourneyLesson.itemIndex] || null
@@ -6659,13 +6698,13 @@ export default function Home() {
                       <div className="journey-practice-source blank">{currentJourneyChangeItem.template}</div>
                       <div className="journey-practice-translation">{currentJourneyChangeItem.cue}</div>
                       <div className="journey-practice-support">{currentJourneyChangeItem.translation}</div>
-                      {currentJourneyChangeItem.options?.length ? (
+                      {currentJourneyChangeOptions.length ? (
                         <div className="journey-option-row">
-                          {currentJourneyChangeItem.options.map((option) => (
+                          {currentJourneyChangeOptions.map((option) => (
                             <button
                               key={option}
                               type="button"
-                              className="ghost journey-option-chip"
+                              className={`ghost journey-option-chip${activeJourneyLesson.input === option ? " selected" : ""}`}
                               onClick={() => submitJourneyValue(option)}
                             >
                               {option}
@@ -6675,50 +6714,24 @@ export default function Home() {
                       ) : null}
                     </div>
                     <div className="journey-answer-area">
-                      <div className="surge-input-wrap">
-                        <input
-                          ref={(node) => {
-                            journeyInputRef.current = node;
-                          }}
-                          type="text"
-                          value={activeJourneyLesson.input}
-                          onChange={(event) =>
-                            mutateJourneyState((state) => ({
-                              ...state,
-                              activeLesson: state.activeLesson
-                                ? {
-                                    ...state.activeLesson,
-                                    input: event.target.value,
-                                  }
-                                : null,
-                            }))
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              activeJourneyLesson.feedback ? continueJourneyAnswer() : submitJourneyAnswer();
-                            }
-                          }}
-                          placeholder="Type the missing word or phrase"
-                        />
-                      </div>
+                      {!activeJourneyLesson.feedback ? (
+                        <div className="journey-choice-helper">Choose the missing word or phrase.</div>
+                      ) : null}
                       {activeJourneyLesson.feedback ? (
                         <div className={`journey-feedback ${activeJourneyLesson.feedback.status}`}>
-                          <span>{activeJourneyLesson.feedback.status === "correct" ? "Nice change." : "Use the missing part below."}</span>
+                          <span>{activeJourneyLesson.feedback.status === "correct" ? "Correct." : "Not quite."}</span>
                           <strong>{activeJourneyLesson.feedback.expected}</strong>
                         </div>
                       ) : null}
                     </div>
                     <div className="journey-lesson-actions">
-                      {!activeJourneyLesson.feedback || activeJourneyLesson.feedback.status === "wrong" ? (
+                      {activeJourneyLesson.feedback?.status === "wrong" ? (
                         <button
                           type="button"
                           className="solid"
-                          onClick={() =>
-                            activeJourneyLesson.feedback ? continueJourneyAnswer() : submitJourneyAnswer()
-                          }
+                          onClick={() => continueJourneyAnswer()}
                         >
-                          {activeJourneyLesson.feedback ? "Continue" : "Check"}
+                          Continue
                         </button>
                       ) : null}
                     </div>
@@ -7235,24 +7248,14 @@ export default function Home() {
                         <div className="journey-practice-source blank">{currentJourneyChangeItem.template}</div>
                         <div className="journey-practice-translation">{currentJourneyChangeItem.cue}</div>
                         <div className="journey-practice-support">{currentJourneyChangeItem.translation}</div>
-                        {currentJourneyChangeItem.options?.length ? (
+                        {currentJourneyChangeOptions.length ? (
                           <div className="journey-option-row">
-                            {currentJourneyChangeItem.options.map((option) => (
+                            {currentJourneyChangeOptions.map((option) => (
                               <button
                                 key={option}
                                 type="button"
-                                className="ghost journey-option-chip"
-                                onClick={() =>
-                                  mutateJourneyState((state) => ({
-                                    ...state,
-                                    activeLesson: state.activeLesson
-                                      ? {
-                                          ...state.activeLesson,
-                                          input: option,
-                                        }
-                                      : null,
-                                  }))
-                                }
+                                className={`ghost journey-option-chip${activeJourneyLesson.input === option ? " selected" : ""}`}
+                                onClick={() => submitJourneyValue(option)}
                               >
                                 {option}
                               </button>
@@ -7260,49 +7263,27 @@ export default function Home() {
                           </div>
                         ) : null}
                       </div>
-                      <div className="surge-input-wrap">
-                        <input
-                          ref={(node) => {
-                            journeyInputRef.current = node;
-                          }}
-                          type="text"
-                          value={activeJourneyLesson.input}
-                          onChange={(event) =>
-                            mutateJourneyState((state) => ({
-                              ...state,
-                              activeLesson: state.activeLesson
-                                ? {
-                                    ...state.activeLesson,
-                                    input: event.target.value,
-                                  }
-                                : null,
-                            }))
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              activeJourneyLesson.feedback ? continueJourneyAnswer() : submitJourneyAnswer();
-                            }
-                          }}
-                          placeholder="Type the missing word or phrase"
-                        />
+                      <div className="journey-answer-area">
+                        {!activeJourneyLesson.feedback ? (
+                          <div className="journey-choice-helper">Choose the missing word or phrase.</div>
+                        ) : null}
+                        {activeJourneyLesson.feedback ? (
+                          <div className={`journey-feedback ${activeJourneyLesson.feedback.status}`}>
+                            <span>{activeJourneyLesson.feedback.status === "correct" ? "Correct." : "Not quite."}</span>
+                            <strong>{activeJourneyLesson.feedback.expected}</strong>
+                          </div>
+                        ) : null}
                       </div>
-                      {activeJourneyLesson.feedback ? (
-                        <div className={`journey-feedback ${activeJourneyLesson.feedback.status}`}>
-                          <span>{activeJourneyLesson.feedback.status === "correct" ? "Nice change." : "Use the missing part below."}</span>
-                          <strong>{activeJourneyLesson.feedback.expected}</strong>
-                        </div>
-                      ) : null}
                       <div className="journey-lesson-actions">
-                        <button
-                          type="button"
-                          className="solid"
-                          onClick={() =>
-                            activeJourneyLesson.feedback ? continueJourneyAnswer() : submitJourneyAnswer()
-                          }
-                        >
-                          {activeJourneyLesson.feedback ? "Continue" : "Check"}
-                        </button>
+                        {activeJourneyLesson.feedback?.status === "wrong" ? (
+                          <button
+                            type="button"
+                            className="solid"
+                            onClick={() => continueJourneyAnswer()}
+                          >
+                            Continue
+                          </button>
+                        ) : null}
                       </div>
                     </>
                   ) : null}

@@ -150,7 +150,7 @@ function toChangeItem(item: RawChangeItem | null | undefined, index: number): Jo
     answer,
     translation,
     options: Array.isArray(item?.options)
-      ? item.options.filter((option): option is string => typeof option === "string" && option.trim()).slice(0, 4)
+      ? item.options.filter((option): option is string => typeof option === "string" && option.trim()).slice(0, 8)
       : undefined,
   };
 }
@@ -265,12 +265,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             "Use natural English translations only for the translation fields.",
             "Repeat items must reuse the same sentence patterns from read items so the learner repeats exact material.",
             "Change items must be fill-in-the-blank sentences using ___ in the target-language template.",
+            "Each change item must include 6 short options and the learner must be able to answer by tapping, not typing.",
+            "The options must reuse words or short chunks that already appear somewhere in the lesson, with only one correct answer.",
             "Build items must ask the learner to make a full target-language sentence from a small English cue.",
             "The use item must be a tiny real-life situation with one strong target-language answer.",
             "If previous review sentences are provided, weave one old pattern into the lesson naturally.",
             "Keep everything concise.",
             "Output exactly this shape:",
-            "{\"summary\":\"...\",\"grammarFocus\":\"...\",\"carryForwardNote\":\"...\",\"readItems\":[{\"target\":\"...\",\"translation\":\"...\"}],\"repeatItems\":[{\"target\":\"...\",\"translation\":\"...\"}],\"changeItems\":[{\"cue\":\"...\",\"template\":\"... ___ ...\",\"answer\":\"...\",\"translation\":\"...\",\"options\":[\"...\",\"...\"]}],\"buildItems\":[{\"cue\":\"...\",\"answer\":\"...\",\"translation\":\"...\",\"support\":\"...\"}],\"useItem\":{\"situation\":\"...\",\"prompt\":\"...\",\"answer\":\"...\",\"translation\":\"...\",\"support\":\"...\"}}",
+            "{\"summary\":\"...\",\"grammarFocus\":\"...\",\"carryForwardNote\":\"...\",\"readItems\":[{\"target\":\"...\",\"translation\":\"...\"}],\"repeatItems\":[{\"target\":\"...\",\"translation\":\"...\"}],\"changeItems\":[{\"cue\":\"...\",\"template\":\"... ___ ...\",\"answer\":\"...\",\"translation\":\"...\",\"options\":[\"...\",\"...\",\"...\",\"...\",\"...\",\"...\"]}],\"buildItems\":[{\"cue\":\"...\",\"answer\":\"...\",\"translation\":\"...\",\"support\":\"...\"}],\"useItem\":{\"situation\":\"...\",\"prompt\":\"...\",\"answer\":\"...\",\"translation\":\"...\",\"support\":\"...\"}}",
           ].join(" "),
         },
       ],
