@@ -1,13 +1,21 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { callOpenAI } from "../../lib/openai";
+import { OPENAI_HEAVY_MODEL, callOpenAI } from "../../lib/openai";
 import {
+  JOURNEY_STEP_ITEM_TARGET,
   getJourneyPart,
+  normalizeJourneyAnswer,
+  normalizeJourneyLessonContent,
   type JourneyBuildItem,
   type JourneyChangeItem,
   type JourneyLessonContent,
   type JourneySentenceItem,
   type JourneyUseItem,
 } from "../../lib/journey";
+
+const JOURNEY_GENERATION_ITEM_COUNT = JOURNEY_STEP_ITEM_TARGET + 1;
+const JOURNEY_MAX_ATTEMPTS = 2;
+const JOURNEY_OPTION_LIMIT = 6;
+const JOURNEY_ACCEPTED_ANSWER_LIMIT = 3;
 
 type RawSentenceItem = {
   id?: string;
@@ -42,6 +50,10 @@ type RawBuildItem = {
   english?: string;
   support?: string;
   hint?: string;
+  acceptedAnswers?: string[];
+  accepted?: string[];
+  alternatives?: string[];
+  alternateAnswers?: string[];
 };
 
 type RawUseItem = {
@@ -53,6 +65,10 @@ type RawUseItem = {
   english?: string;
   support?: string;
   hint?: string;
+  acceptedAnswers?: string[];
+  accepted?: string[];
+  alternatives?: string[];
+  alternateAnswers?: string[];
 };
 
 type RawJourneyLesson = {
@@ -69,8 +85,9 @@ type RawJourneyLesson = {
   change?: RawChangeItem[];
   buildItems?: RawBuildItem[];
   build?: RawBuildItem[];
+  useItems?: RawUseItem[];
   useItem?: RawUseItem;
-  use?: RawUseItem;
+  use?: RawUseItem | RawUseItem[];
 };
 
 function safeJsonParse<T>(value: string): T | null {
@@ -90,6 +107,88 @@ function safeJsonParse<T>(value: string): T | null {
   }
 }
 
+function cleanLessonText(value: string) {
+  return value.replace(/\s+/g, " ").replace(/\s+([?!.,;:])/g, "$1").trim();
+}
+
+function cleanTargetText(value: string, translation = "") {
+  const cleaned = cleanLessonText(value);
+  const cleanedTranslation = cleanLessonText(translation);
+  if (/\?$/.test(cleanedTranslation) && !/\?$/.test(cleaned)) {
+    return `${cleaned.replace(/[.!]+$/g, "").trim()}?`;
+  }
+  return cleaned;
+}
+
+function cleanBlankText(value: string) {
+  return cleanLessonText(value).replace(/[?!.,;:]+$/g, "").trim();
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractBlankAnswer(template: string, value: string) {
+  const candidate = cleanBlankText(value);
+  if (!template.includes("___")) {
+    return candidate;
+  }
+
+  const [beforeRaw, afterRaw] = template.split("___");
+  const before = cleanBlankText(beforeRaw || "");
+  const after = cleanBlankText(afterRaw || "");
+  let extracted = candidate;
+
+  if (before) {
+    extracted = extracted.replace(new RegExp(`^${escapeRegExp(before)}\\s*`, "i"), "").trim();
+  }
+  if (after) {
+    extracted = extracted.replace(new RegExp(`\\s*${escapeRegExp(after)}$`, "i"), "").trim();
+  }
+
+  return cleanBlankText(extracted || candidate);
+}
+
+function normalizeAcceptedAnswers(source: unknown, primary: string, translation = "") {
+  if (!Array.isArray(source)) {
+    return undefined;
+  }
+
+  const primaryKey = normalizeJourneyAnswer(primary);
+  const seen = new Set<string>(primaryKey ? [primaryKey] : []);
+  const accepted = source
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => cleanTargetText(value, translation))
+    .filter((value) => {
+      const key = normalizeJourneyAnswer(value);
+      if (!key || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, JOURNEY_ACCEPTED_ANSWER_LIMIT);
+
+  return accepted.length ? accepted : undefined;
+}
+
+function uniqueItems<T>(items: T[], keyForItem: (item: T) => string, limit: number) {
+  const seen = new Set<string>();
+  const unique: T[] = [];
+  for (const item of items) {
+    const key = keyForItem(item);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(item);
+    if (unique.length >= limit) {
+      break;
+    }
+  }
+  return unique;
+}
+
 function toSentenceItem(item: RawSentenceItem | null | undefined, index: number): JourneySentenceItem | null {
   const targetSource =
     typeof item?.target === "string"
@@ -107,8 +206,8 @@ function toSentenceItem(item: RawSentenceItem | null | undefined, index: number)
         : typeof item?.meaning === "string"
           ? item.meaning
           : "";
-  const target = targetSource.trim();
-  const translation = translationSource.trim();
+  const translation = cleanLessonText(translationSource.trim());
+  const target = cleanTargetText(targetSource.trim(), translation);
   if (!target || !translation) {
     return null;
   }
@@ -136,10 +235,10 @@ function toChangeItem(item: RawChangeItem | null | undefined, index: number): Jo
         ? item.english
         : "";
 
-  const cue = cueSource.trim();
-  const template = templateSource.trim();
-  const answer = answerSource.trim();
-  const translation = translationSource.trim();
+  const translation = cleanLessonText(translationSource.trim());
+  const cue = cleanLessonText(cueSource.trim());
+  const template = cleanTargetText(templateSource.trim(), translation);
+  const answer = extractBlankAnswer(template, answerSource.trim());
   if (!template || !answer || !translation || !template.includes("___")) {
     return null;
   }
@@ -150,7 +249,9 @@ function toChangeItem(item: RawChangeItem | null | undefined, index: number): Jo
     answer,
     translation,
     options: Array.isArray(item?.options)
-      ? item.options.filter((option): option is string => typeof option === "string" && option.trim()).slice(0, 8)
+      ? item.options
+          .filter((option): option is string => typeof option === "string" && option.trim())
+          .map((option) => extractBlankAnswer(template, option))
       : undefined,
   };
 }
@@ -168,9 +269,10 @@ function toBuildItem(item: RawBuildItem | null | undefined, index: number): Jour
   const supportSource =
     typeof item?.support === "string" ? item.support : typeof item?.hint === "string" ? item.hint : "";
 
-  const cue = cueSource.trim();
-  const answer = answerSource.trim();
-  const translation = translationSource.trim();
+  const translation = cleanLessonText(translationSource.trim());
+  const cue = cleanLessonText(cueSource.trim());
+  const answer = cleanTargetText(answerSource.trim(), translation);
+  const support = cleanLessonText(supportSource.trim());
   if (!cue || !answer || !translation) {
     return null;
   }
@@ -179,13 +281,18 @@ function toBuildItem(item: RawBuildItem | null | undefined, index: number): Jour
     cue,
     answer,
     translation,
-    support: supportSource.trim() || undefined,
+    support: support || undefined,
+    acceptedAnswers:
+      normalizeAcceptedAnswers(item?.acceptedAnswers, answer, translation) ||
+      normalizeAcceptedAnswers(item?.accepted, answer, translation) ||
+      normalizeAcceptedAnswers(item?.alternatives, answer, translation) ||
+      normalizeAcceptedAnswers(item?.alternateAnswers, answer, translation),
   };
 }
 
 function toUseItem(item: RawUseItem | null | undefined): JourneyUseItem | null {
-  const situation = typeof item?.situation === "string" ? item.situation.trim() : "";
-  const prompt = typeof item?.prompt === "string" ? item.prompt.trim() : "";
+  const situation = typeof item?.situation === "string" ? cleanLessonText(item.situation.trim()) : "";
+  const prompt = typeof item?.prompt === "string" ? cleanLessonText(item.prompt.trim()) : "";
   const answer =
     typeof item?.answer === "string"
       ? item.answer.trim()
@@ -194,28 +301,223 @@ function toUseItem(item: RawUseItem | null | undefined): JourneyUseItem | null {
         : "";
   const translation =
     typeof item?.translation === "string"
-      ? item.translation.trim()
+      ? cleanLessonText(item.translation.trim())
       : typeof item?.english === "string"
-        ? item.english.trim()
+        ? cleanLessonText(item.english.trim())
         : "";
   const support =
     typeof item?.support === "string"
-      ? item.support.trim()
+      ? cleanLessonText(item.support.trim())
       : typeof item?.hint === "string"
-        ? item.hint.trim()
+        ? cleanLessonText(item.hint.trim())
         : "";
+  const normalizedAnswer = cleanTargetText(answer, translation);
 
-  if (!situation || !prompt || !answer || !translation) {
+  if (!situation || !prompt || !normalizedAnswer || !translation) {
     return null;
   }
 
   return {
     situation,
     prompt,
-    answer,
+    answer: normalizedAnswer,
     translation,
     support: support || undefined,
+    acceptedAnswers:
+      normalizeAcceptedAnswers(item?.acceptedAnswers, normalizedAnswer, translation) ||
+      normalizeAcceptedAnswers(item?.accepted, normalizedAnswer, translation) ||
+      normalizeAcceptedAnswers(item?.alternatives, normalizedAnswer, translation) ||
+      normalizeAcceptedAnswers(item?.alternateAnswers, normalizedAnswer, translation),
   };
+}
+
+function finalizeSentenceItems(items: JourneySentenceItem[], prefix: string) {
+  return uniqueItems(
+    items,
+    (item) => `${normalizeJourneyAnswer(item.target)}::${item.translation.toLocaleLowerCase()}`,
+    JOURNEY_STEP_ITEM_TARGET
+  ).map((item, index) => ({
+    ...item,
+    id: `${prefix}-${index + 1}`,
+  }));
+}
+
+function finalizeChangeItems(items: JourneyChangeItem[]) {
+  return uniqueItems(
+    items.map((item) => {
+      const answerKey = normalizeJourneyAnswer(item.answer);
+      const options = uniqueItems(
+        [item.answer, ...(item.options || [])].map((option) => cleanBlankText(option)),
+        (option) => normalizeJourneyAnswer(option),
+        JOURNEY_OPTION_LIMIT
+      );
+      const ensuredOptions = options.some((option) => normalizeJourneyAnswer(option) === answerKey)
+        ? options
+        : [item.answer, ...options].slice(0, JOURNEY_OPTION_LIMIT);
+      return {
+        ...item,
+        options: ensuredOptions,
+      };
+    }),
+    (item) => normalizeJourneyAnswer(item.template.replace("___", item.answer)),
+    JOURNEY_STEP_ITEM_TARGET
+  ).map((item, index) => ({
+    ...item,
+    id: `change-${index + 1}`,
+  }));
+}
+
+function finalizeBuildItems(items: JourneyBuildItem[]) {
+  return uniqueItems(items, (item) => normalizeJourneyAnswer(item.answer), JOURNEY_STEP_ITEM_TARGET).map((item, index) => ({
+    ...item,
+    id: `build-${index + 1}`,
+  }));
+}
+
+function finalizeUseItems(items: JourneyUseItem[]) {
+  return uniqueItems(
+    items,
+    (item) => `${cleanLessonText(item.prompt).toLocaleLowerCase()}::${normalizeJourneyAnswer(item.answer)}`,
+    JOURNEY_STEP_ITEM_TARGET
+  );
+}
+
+function buildJourneyPrompt(
+  language: string,
+  difficulty: string,
+  part: NonNullable<ReturnType<typeof getJourneyPart>>,
+  reviewList: Array<{ target: string; translation: string }>,
+  attempt: number
+) {
+  return [
+    {
+      role: "system",
+      content: [
+        {
+          type: "text" as const,
+          text: [
+            "You create polished beginner language-learning lesson JSON.",
+            "Return JSON only.",
+            "Design one coherent micro-skill arc for a single part.",
+            "Every exercise must teach the same core pattern and progress logically from clear examples to small changes to full production to real use.",
+            "Use short, natural target-language sentences a native speaker would actually say in daily life.",
+            "Do not output duplicate target-language sentences inside any list.",
+            "The app creates repeat practice from readItems, so do not output repeatItems.",
+            "Every cue and prompt must match the exact expected answer. Do not ask for extra information that the answer does not say.",
+            "If the English translation is a question, the target-language sentence must also be a question.",
+            "changeItems must blank only one short chunk from a sentence pattern already taught in readItems.",
+            "In changeItems, blank the content chunk that changes the meaning. Do not blank generic subject pronouns or helper words unless the part is specifically about those forms.",
+            "buildItems must be solvable using only the lesson material already introduced.",
+            "useItems must be tiny realistic situations with one strong answer and optional natural alternatives.",
+            "For buildItems and useItems, include acceptedAnswers only when there are other short natural phrasings that genuinely fit.",
+            attempt > 0
+              ? "Retry fix: the last draft had duplicates, not enough usable items, or cue-answer mismatches. Fix those problems."
+              : "",
+            "Output exactly this shape:",
+            "{\"summary\":\"...\",\"grammarFocus\":\"...\",\"carryForwardNote\":\"...\",\"readItems\":[{\"target\":\"...\",\"translation\":\"...\"}],\"changeItems\":[{\"cue\":\"...\",\"template\":\"... ___ ...\",\"answer\":\"...\",\"translation\":\"...\",\"options\":[\"...\",\"...\",\"...\",\"...\",\"...\",\"...\"]}],\"buildItems\":[{\"cue\":\"...\",\"answer\":\"...\",\"translation\":\"...\",\"support\":\"...\",\"acceptedAnswers\":[\"...\"]}],\"useItems\":[{\"situation\":\"...\",\"prompt\":\"...\",\"answer\":\"...\",\"translation\":\"...\",\"support\":\"...\",\"acceptedAnswers\":[\"...\"]}]}",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        },
+      ],
+    },
+    {
+      role: "user",
+      content: [
+        {
+          type: "text" as const,
+          text: [
+            `Target language: ${language}`,
+            `Difficulty: ${difficulty || "easy"}`,
+            `Part title: ${part.title}`,
+            `Part focus: ${part.focus}`,
+            `Part summary: ${part.summary}`,
+            `Anchor English sentences:\n${part.anchorEnglish.map((sentence) => `- ${sentence}`).join("\n")}`,
+            reviewList.length
+              ? `Previous patterns to weave in lightly:\n${reviewList
+                  .map((item) => `- ${item.target} = ${item.translation}`)
+                  .join("\n")}`
+              : "Previous patterns to weave in lightly: none",
+            "Requirements:",
+            `- ${JOURNEY_GENERATION_ITEM_COUNT} readItems`,
+            `- ${JOURNEY_GENERATION_ITEM_COUNT} changeItems`,
+            `- ${JOURNEY_GENERATION_ITEM_COUNT} buildItems`,
+            `- ${JOURNEY_GENERATION_ITEM_COUNT} useItems`,
+            "- Order each list from easiest to slightly more flexible",
+            "- readItems should establish the base pattern cleanly",
+            "- changeItems should swap only one meaningful chunk at a time",
+            "- buildItems should feel like direct recall of taught material",
+            "- useItems should feel like tiny real-life moments, not abstract grammar drills",
+            "- Keep cues in plain English and make them specific",
+            "- Keep target-language answers short, natural, and beginner-friendly",
+            "- No duplicate sentences or near-duplicate prompts",
+          ].join("\n\n"),
+        },
+      ],
+    },
+  ];
+}
+
+function buildLessonFromReply(
+  reply: string,
+  chapterId: string,
+  partId: string,
+  part: NonNullable<ReturnType<typeof getJourneyPart>>
+) {
+  const parsed = safeJsonParse<RawJourneyLesson>(reply);
+  const readItems = finalizeSentenceItems(
+    (parsed?.readItems || parsed?.read || []).map(toSentenceItem).filter(Boolean) as JourneySentenceItem[],
+    "read"
+  );
+  const changeItems = finalizeChangeItems(
+    (parsed?.changeItems || parsed?.change || []).map(toChangeItem).filter(Boolean) as JourneyChangeItem[]
+  );
+  const buildItems = finalizeBuildItems(
+    (parsed?.buildItems || parsed?.build || []).map(toBuildItem).filter(Boolean) as JourneyBuildItem[]
+  );
+  const rawUseItems = Array.isArray(parsed?.useItems)
+    ? parsed.useItems
+    : Array.isArray(parsed?.use)
+      ? parsed.use
+      : parsed?.useItem
+        ? [parsed.useItem]
+        : parsed?.use
+          ? [parsed.use]
+          : [];
+  const useItems = finalizeUseItems(rawUseItems.map((item) => toUseItem(item)).filter(Boolean) as JourneyUseItem[]);
+  const repeatItems = readItems.map((item, index) => ({
+    id: `repeat-${index + 1}`,
+    target: item.target,
+    translation: item.translation,
+  }));
+
+  const lessonCandidate: JourneyLessonContent = {
+    chapterId,
+    partId,
+    summary:
+      typeof parsed?.summary === "string" && parsed.summary.trim()
+        ? cleanLessonText(parsed.summary.trim())
+        : part.summary,
+    grammarFocus:
+      typeof parsed?.grammarFocus === "string" && parsed.grammarFocus.trim()
+        ? cleanLessonText(parsed.grammarFocus.trim())
+        : typeof parsed?.grammar_focus === "string" && parsed.grammar_focus.trim()
+          ? cleanLessonText(parsed.grammar_focus.trim())
+          : part.focus,
+    carryForwardNote:
+      typeof parsed?.carryForwardNote === "string" && parsed.carryForwardNote.trim()
+        ? cleanLessonText(parsed.carryForwardNote.trim())
+        : typeof parsed?.carry_forward_note === "string" && parsed.carry_forward_note.trim()
+          ? cleanLessonText(parsed.carry_forward_note.trim())
+          : undefined,
+    readItems,
+    repeatItems,
+    changeItems,
+    buildItems,
+    useItems,
+  };
+
+  return normalizeJourneyLessonContent(lessonCandidate);
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -250,113 +552,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         .slice(-10)
     : [];
 
-  const prompt = [
-    {
-      role: "system",
-      content: [
-        {
-          type: "text" as const,
-          text: [
-            "You create compact, highly practical language-learning lesson JSON.",
-            "The learner is a beginner and needs full sentences, not isolated vocabulary lists.",
-            "Return JSON only.",
-            "Every target-language sentence must be short, natural, and actually useful in daily life.",
-            "Keep the grammar tightly focused on the part goal.",
-            "Use natural English translations only for the translation fields.",
-            "Repeat items must reuse the same sentence patterns from read items so the learner repeats exact material.",
-            "Change items must be fill-in-the-blank sentences using ___ in the target-language template.",
-            "Each change item must include 6 short options and the learner must be able to answer by tapping, not typing.",
-            "The options must reuse words or short chunks that already appear somewhere in the lesson, with only one correct answer.",
-            "Build items must ask the learner to make a full target-language sentence from a small English cue.",
-            "The use item must be a tiny real-life situation with one strong target-language answer.",
-            "If previous review sentences are provided, weave one old pattern into the lesson naturally.",
-            "Keep everything concise.",
-            "Output exactly this shape:",
-            "{\"summary\":\"...\",\"grammarFocus\":\"...\",\"carryForwardNote\":\"...\",\"readItems\":[{\"target\":\"...\",\"translation\":\"...\"}],\"repeatItems\":[{\"target\":\"...\",\"translation\":\"...\"}],\"changeItems\":[{\"cue\":\"...\",\"template\":\"... ___ ...\",\"answer\":\"...\",\"translation\":\"...\",\"options\":[\"...\",\"...\",\"...\",\"...\",\"...\",\"...\"]}],\"buildItems\":[{\"cue\":\"...\",\"answer\":\"...\",\"translation\":\"...\",\"support\":\"...\"}],\"useItem\":{\"situation\":\"...\",\"prompt\":\"...\",\"answer\":\"...\",\"translation\":\"...\",\"support\":\"...\"}}",
-          ].join(" "),
-        },
-      ],
-    },
-    {
-      role: "user",
-      content: [
-        {
-          type: "text" as const,
-          text: [
-            `Target language: ${language}`,
-            `Difficulty: ${difficulty || "easy"}`,
-            `Part title: ${part.title}`,
-            `Part focus: ${part.focus}`,
-            `Part summary: ${part.summary}`,
-            `Anchor English sentences:\n${part.anchorEnglish.map((sentence) => `- ${sentence}`).join("\n")}`,
-            reviewList.length
-              ? `Previous sentences to recycle softly:\n${reviewList
-                  .map((item) => `- ${item.target} = ${item.translation}`)
-                  .join("\n")}`
-              : "Previous sentences to recycle softly: none",
-            "Requirements:",
-            "- 4 readItems",
-            "- 3 repeatItems",
-            "- 3 changeItems",
-            "- 3 buildItems",
-            "- 1 useItem",
-            "- All target-language text must stay beginner-friendly and short",
-            "- Prefer sentence frames the learner can reuse immediately",
-            "- Make the lesson feel cumulative and practical",
-          ].join("\n\n"),
-        },
-      ],
-    },
-  ];
+  let lastReply = "";
 
   try {
-    const reply = await callOpenAI(prompt);
-    const parsed = safeJsonParse<RawJourneyLesson>(reply);
-    const readItems = (parsed?.readItems || parsed?.read || []).map(toSentenceItem).filter(Boolean) as JourneySentenceItem[];
-    const repeatItems = (parsed?.repeatItems || parsed?.repeat || []).map(toSentenceItem).filter(Boolean) as JourneySentenceItem[];
-    const changeItems = (parsed?.changeItems || parsed?.change || []).map(toChangeItem).filter(Boolean) as JourneyChangeItem[];
-    const buildItems = (parsed?.buildItems || parsed?.build || []).map(toBuildItem).filter(Boolean) as JourneyBuildItem[];
-    const useItem = toUseItem(parsed?.useItem || parsed?.use);
+    for (let attempt = 0; attempt < JOURNEY_MAX_ATTEMPTS; attempt += 1) {
+      const reply = await callOpenAI(
+        buildJourneyPrompt(String(language), String(difficulty || "easy"), part, reviewList, attempt),
+        {
+          model: OPENAI_HEAVY_MODEL,
+        }
+      );
+      lastReply = reply;
 
-    if (
-      readItems.length < 3 ||
-      repeatItems.length < 2 ||
-      changeItems.length < 2 ||
-      buildItems.length < 2 ||
-      !useItem
-    ) {
-      console.error("Invalid journey lesson payload:", reply);
-      res.status(500).json({ error: "Journey lesson generation failed" });
-      return;
+      const lesson = buildLessonFromReply(reply, String(chapterId), String(partId), part);
+      if (lesson) {
+        res.json({ lesson });
+        return;
+      }
     }
 
-    const lesson: JourneyLessonContent = {
-      chapterId: String(chapterId),
-      partId: String(partId),
-      summary:
-        typeof parsed?.summary === "string" && parsed.summary.trim()
-          ? parsed.summary.trim()
-          : part.summary,
-      grammarFocus:
-        typeof parsed?.grammarFocus === "string" && parsed.grammarFocus.trim()
-          ? parsed.grammarFocus.trim()
-          : typeof parsed?.grammar_focus === "string" && parsed.grammar_focus.trim()
-            ? parsed.grammar_focus.trim()
-            : part.focus,
-      carryForwardNote:
-        typeof parsed?.carryForwardNote === "string" && parsed.carryForwardNote.trim()
-          ? parsed.carryForwardNote.trim()
-          : typeof parsed?.carry_forward_note === "string" && parsed.carry_forward_note.trim()
-            ? parsed.carry_forward_note.trim()
-            : undefined,
-      readItems: readItems.slice(0, 4).map((item, index) => ({ ...item, id: `read-${index + 1}` })),
-      repeatItems: repeatItems.slice(0, 3).map((item, index) => ({ ...item, id: `repeat-${index + 1}` })),
-      changeItems: changeItems.slice(0, 3).map((item, index) => ({ ...item, id: `change-${index + 1}` })),
-      buildItems: buildItems.slice(0, 3).map((item, index) => ({ ...item, id: `build-${index + 1}` })),
-      useItem,
-    };
-
-    res.json({ lesson });
+    console.error("Invalid journey lesson payload:", lastReply);
+    res.status(500).json({ error: "Journey lesson generation failed" });
   } catch (error) {
     console.error("Failed to generate journey part:", error);
     res.status(500).json({ error: "Failed to generate journey part" });

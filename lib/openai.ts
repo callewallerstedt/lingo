@@ -1,9 +1,18 @@
-export const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
-export const TRANSLATION_MODEL = "gpt-4o-mini";
+export const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
+export const OPENAI_HEAVY_MODEL = process.env.OPENAI_HEAVY_MODEL || "gpt-5";
+export const TRANSLATION_MODEL = process.env.OPENAI_TRANSLATION_MODEL || OPENAI_MODEL;
 export const TTS_MODEL = process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts";
 export const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe";
 
-export async function callOpenAI(messages: Array<{ role: string; content: Array<{ type: "text"; text: string }> }>) {
+type OpenAIMessages = Array<{ role: string; content: Array<{ type: "text"; text: string }> }>;
+
+type OpenAIRequestOptions = {
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+};
+
+export async function callOpenAI(messages: OpenAIMessages, options: OpenAIRequestOptions = {}) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("Missing OPENAI_API_KEY");
@@ -16,8 +25,10 @@ export async function callOpenAI(messages: Array<{ role: string; content: Array<
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: OPENAI_MODEL,
+      model: options.model || OPENAI_MODEL,
       messages: messages,
+      ...(typeof options.temperature === "number" ? { temperature: options.temperature } : {}),
+      ...(typeof options.maxTokens === "number" ? { max_tokens: options.maxTokens } : {}),
       // Add cache busting to ensure fresh responses
       user: `user_${Date.now()}_${Math.random()}`,
     }),

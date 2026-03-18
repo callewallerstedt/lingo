@@ -22,6 +22,7 @@ export type JourneyBuildItem = {
   answer: string;
   translation: string;
   support?: string;
+  acceptedAnswers?: string[];
 };
 
 export type JourneyUseItem = {
@@ -30,6 +31,7 @@ export type JourneyUseItem = {
   answer: string;
   translation: string;
   support?: string;
+  acceptedAnswers?: string[];
 };
 
 export type JourneyLessonContent = {
@@ -42,7 +44,7 @@ export type JourneyLessonContent = {
   repeatItems: JourneySentenceItem[];
   changeItems: JourneyChangeItem[];
   buildItems: JourneyBuildItem[];
-  useItem: JourneyUseItem;
+  useItems: JourneyUseItem[];
 };
 
 export type JourneyMatchState = {
@@ -134,6 +136,7 @@ export const JOURNEY_MODE_LABELS: Record<JourneyMode, string> = {
 };
 
 export const JOURNEY_STORAGE_KEY_PREFIX = "lingoarc_journey_state_";
+export const JOURNEY_STEP_ITEM_TARGET = 5;
 
 function createPart(
   id: string,
@@ -299,11 +302,99 @@ export function getJourneyPart(chapterId: string, partId: string) {
   return getJourneyChapter(chapterId)?.parts.find((part) => part.id === partId) || null;
 }
 
+function cleanJourneyText(value: string) {
+  return value.replace(/\s+/g, " ").replace(/\s+([?!.,;:])/g, "$1").trim();
+}
+
+function cleanJourneyBlankText(value: string) {
+  return cleanJourneyText(value).replace(/[?!.,;:]+$/g, "").trim();
+}
+
+function escapeJourneyRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractJourneyBlankAnswer(template: string, value: string) {
+  const candidate = cleanJourneyBlankText(value);
+  if (!template.includes("___")) {
+    return candidate;
+  }
+
+  const [beforeRaw, afterRaw] = template.split("___");
+  const before = cleanJourneyBlankText(beforeRaw || "");
+  const after = cleanJourneyBlankText(afterRaw || "");
+  let extracted = candidate;
+
+  if (before) {
+    extracted = extracted.replace(new RegExp(`^${escapeJourneyRegExp(before)}\\s*`, "i"), "").trim();
+  }
+  if (after) {
+    extracted = extracted.replace(new RegExp(`\\s*${escapeJourneyRegExp(after)}$`, "i"), "").trim();
+  }
+
+  return cleanJourneyBlankText(extracted || candidate);
+}
+
+function cleanJourneyTargetText(target: string, translation = "") {
+  const cleanedTranslation = cleanJourneyText(translation);
+  let cleanedTarget = cleanJourneyText(target);
+  if (/\?$/.test(cleanedTranslation) && !/[?؟]$/.test(cleanedTarget)) {
+    cleanedTarget = `${cleanedTarget.replace(/[.!]+$/g, "").trim()}?`;
+  }
+  return cleanedTarget;
+}
+
+export function normalizeJourneyAnswer(value: string) {
+  return value
+    .toLocaleLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/[’']/g, "")
+    .replace(/[^\p{L}\p{N} -]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeAcceptedAnswers(source: unknown, primary: string) {
+  if (!Array.isArray(source)) {
+    return undefined;
+  }
+
+  const primaryKey = normalizeJourneyAnswer(primary);
+  const seen = new Set<string>(primaryKey ? [primaryKey] : []);
+  const accepted = source
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => cleanJourneyTargetText(value))
+    .filter((value) => {
+      const key = normalizeJourneyAnswer(value);
+      if (!key || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+
+  return accepted.length ? accepted : undefined;
+}
+
+export function matchesJourneyAnswer(submitted: string, expected: string, acceptedAnswers: string[] = []) {
+  const normalizedSubmitted = normalizeJourneyAnswer(submitted);
+  if (!normalizedSubmitted) {
+    return false;
+  }
+
+  return [expected, ...acceptedAnswers]
+    .map((value) => normalizeJourneyAnswer(value))
+    .filter(Boolean)
+    .includes(normalizedSubmitted);
+}
+
 function normalizeSentenceItem(source: unknown, fallbackId: string): JourneySentenceItem | null {
   const item = source as Partial<JourneySentenceItem> | null | undefined;
   const id = typeof item?.id === "string" && item.id.trim() ? item.id.trim() : fallbackId;
-  const target = typeof item?.target === "string" ? item.target.trim() : "";
-  const translation = typeof item?.translation === "string" ? item.translation.trim() : "";
+  const translation = typeof item?.translation === "string" ? cleanJourneyText(item.translation) : "";
+  const target = typeof item?.target === "string" ? cleanJourneyTargetText(item.target, translation) : "";
   if (!target || !translation) {
     return null;
   }
@@ -312,10 +403,10 @@ function normalizeSentenceItem(source: unknown, fallbackId: string): JourneySent
 
 function normalizeChangeItem(source: unknown, fallbackId: string): JourneyChangeItem | null {
   const item = source as Partial<JourneyChangeItem> | null | undefined;
-  const cue = typeof item?.cue === "string" ? item.cue.trim() : "";
-  const template = typeof item?.template === "string" ? item.template.trim() : "";
-  const answer = typeof item?.answer === "string" ? item.answer.trim() : "";
-  const translation = typeof item?.translation === "string" ? item.translation.trim() : "";
+  const cue = typeof item?.cue === "string" ? cleanJourneyText(item.cue) : "";
+  const translation = typeof item?.translation === "string" ? cleanJourneyText(item.translation) : "";
+  const template = typeof item?.template === "string" ? cleanJourneyTargetText(item.template, translation) : "";
+  const answer = typeof item?.answer === "string" ? extractJourneyBlankAnswer(template, item.answer) : "";
   if (!template || !answer || !translation || !template.includes("___")) {
     return null;
   }
@@ -328,7 +419,7 @@ function normalizeChangeItem(source: unknown, fallbackId: string): JourneyChange
     options: Array.isArray(item?.options)
       ? item.options
           .filter((option): option is string => typeof option === "string")
-          .map((option) => option.trim())
+          .map((option) => extractJourneyBlankAnswer(template, option))
           .filter(Boolean)
       : undefined,
   };
@@ -336,10 +427,16 @@ function normalizeChangeItem(source: unknown, fallbackId: string): JourneyChange
 
 function normalizeBuildItem(source: unknown, fallbackId: string): JourneyBuildItem | null {
   const item = source as Partial<JourneyBuildItem> | null | undefined;
-  const cue = typeof item?.cue === "string" ? item.cue.trim() : "";
-  const answer = typeof item?.answer === "string" ? item.answer.trim() : "";
-  const translation = typeof item?.translation === "string" ? item.translation.trim() : "";
-  const support = typeof item?.support === "string" ? item.support.trim() : "";
+  const rawItem = item as (Partial<JourneyBuildItem> & {
+    acceptedAnswers?: string[];
+    accepted?: string[];
+    alternatives?: string[];
+    alternateAnswers?: string[];
+  }) | null | undefined;
+  const cue = typeof item?.cue === "string" ? cleanJourneyText(item.cue) : "";
+  const translation = typeof item?.translation === "string" ? cleanJourneyText(item.translation) : "";
+  const answer = typeof item?.answer === "string" ? cleanJourneyTargetText(item.answer, translation) : "";
+  const support = typeof item?.support === "string" ? cleanJourneyText(item.support) : "";
   if (!cue || !answer || !translation) {
     return null;
   }
@@ -349,16 +446,27 @@ function normalizeBuildItem(source: unknown, fallbackId: string): JourneyBuildIt
     answer,
     translation,
     support: support || undefined,
+    acceptedAnswers:
+      normalizeAcceptedAnswers(rawItem?.acceptedAnswers, answer) ||
+      normalizeAcceptedAnswers(rawItem?.accepted, answer) ||
+      normalizeAcceptedAnswers(rawItem?.alternatives, answer) ||
+      normalizeAcceptedAnswers(rawItem?.alternateAnswers, answer),
   };
 }
 
 function normalizeUseItem(source: unknown): JourneyUseItem | null {
   const item = source as Partial<JourneyUseItem> | null | undefined;
-  const situation = typeof item?.situation === "string" ? item.situation.trim() : "";
-  const prompt = typeof item?.prompt === "string" ? item.prompt.trim() : "";
-  const answer = typeof item?.answer === "string" ? item.answer.trim() : "";
-  const translation = typeof item?.translation === "string" ? item.translation.trim() : "";
-  const support = typeof item?.support === "string" ? item.support.trim() : "";
+  const rawItem = item as (Partial<JourneyUseItem> & {
+    acceptedAnswers?: string[];
+    accepted?: string[];
+    alternatives?: string[];
+    alternateAnswers?: string[];
+  }) | null | undefined;
+  const situation = typeof item?.situation === "string" ? cleanJourneyText(item.situation) : "";
+  const prompt = typeof item?.prompt === "string" ? cleanJourneyText(item.prompt) : "";
+  const translation = typeof item?.translation === "string" ? cleanJourneyText(item.translation) : "";
+  const answer = typeof item?.answer === "string" ? cleanJourneyTargetText(item.answer, translation) : "";
+  const support = typeof item?.support === "string" ? cleanJourneyText(item.support) : "";
   if (!situation || !prompt || !answer || !translation) {
     return null;
   }
@@ -368,6 +476,11 @@ function normalizeUseItem(source: unknown): JourneyUseItem | null {
     answer,
     translation,
     support: support || undefined,
+    acceptedAnswers:
+      normalizeAcceptedAnswers(rawItem?.acceptedAnswers, answer) ||
+      normalizeAcceptedAnswers(rawItem?.accepted, answer) ||
+      normalizeAcceptedAnswers(rawItem?.alternatives, answer) ||
+      normalizeAcceptedAnswers(rawItem?.alternateAnswers, answer),
   };
 }
 
@@ -399,9 +512,30 @@ export function normalizeJourneyLessonContent(source: unknown): JourneyLessonCon
         .map((item, index) => normalizeBuildItem(item, `build-${index + 1}`))
         .filter((item): item is JourneyBuildItem => Boolean(item))
     : [];
-  const useItem = normalizeUseItem(lesson?.useItem);
+  const useSource = Array.isArray((lesson as { useItems?: unknown[] } | null | undefined)?.useItems)
+    ? ((lesson as { useItems?: unknown[] }).useItems || [])
+    : (lesson as { useItem?: unknown } | null | undefined)?.useItem
+      ? [(lesson as { useItem?: unknown }).useItem]
+      : [];
+  const useItems = useSource
+    .map((item) => normalizeUseItem(item))
+    .filter((item): item is JourneyUseItem => Boolean(item));
+  const normalizedRepeatItems =
+    repeatItems.length >= JOURNEY_STEP_ITEM_TARGET
+      ? repeatItems
+      : readItems.map((item, index) => ({
+          id: `repeat-${index + 1}`,
+          target: item.target,
+          translation: item.translation,
+        }));
 
-  if (!readItems.length || !repeatItems.length || !changeItems.length || !buildItems.length || !useItem) {
+  if (
+    readItems.length < JOURNEY_STEP_ITEM_TARGET ||
+    normalizedRepeatItems.length < JOURNEY_STEP_ITEM_TARGET ||
+    changeItems.length < JOURNEY_STEP_ITEM_TARGET ||
+    buildItems.length < JOURNEY_STEP_ITEM_TARGET ||
+    useItems.length < JOURNEY_STEP_ITEM_TARGET
+  ) {
     return null;
   }
 
@@ -417,11 +551,11 @@ export function normalizeJourneyLessonContent(source: unknown): JourneyLessonCon
       typeof lesson?.carryForwardNote === "string" && lesson.carryForwardNote.trim()
         ? lesson.carryForwardNote.trim()
         : undefined,
-    readItems: readItems.slice(0, 5),
-    repeatItems: repeatItems.slice(0, 4),
-    changeItems: changeItems.slice(0, 4),
-    buildItems: buildItems.slice(0, 4),
-    useItem,
+    readItems: readItems.slice(0, JOURNEY_STEP_ITEM_TARGET),
+    repeatItems: normalizedRepeatItems.slice(0, JOURNEY_STEP_ITEM_TARGET),
+    changeItems: changeItems.slice(0, JOURNEY_STEP_ITEM_TARGET),
+    buildItems: buildItems.slice(0, JOURNEY_STEP_ITEM_TARGET),
+    useItems: useItems.slice(0, JOURNEY_STEP_ITEM_TARGET),
   };
 }
 
@@ -615,13 +749,14 @@ export function collectJourneyLearnedSentences(content: JourneyLessonContent) {
       translation: item.translation,
     });
   });
-  if (content.useItem.answer && content.useItem.translation) {
-    map.set(`${content.useItem.answer}::${content.useItem.translation}`, {
-      id: "use-0",
-      target: content.useItem.answer,
-      translation: content.useItem.translation,
+  content.useItems.forEach((item, index) => {
+    if (!item.answer || !item.translation) return;
+    map.set(`${item.answer}::${item.translation}`, {
+      id: `use-${index}`,
+      target: item.answer,
+      translation: item.translation,
     });
-  }
+  });
   return Array.from(map.values()).slice(0, 8);
 }
 
