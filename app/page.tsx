@@ -327,6 +327,7 @@ export default function Home() {
   const pendingJourneySyncRef = useRef<JourneyStateSnapshot | null>(null);
   const journeySyncInFlightRef = useRef<boolean>(false);
   const journeySyncRetryTimerRef = useRef<number | null>(null);
+  const journeyAutoAdvanceTimerRef = useRef<number | null>(null);
   const taskRef = useRef<string>("");
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef<boolean>(false);
@@ -451,6 +452,9 @@ export default function Home() {
       }
       if (journeySyncRetryTimerRef.current !== null) {
         window.clearTimeout(journeySyncRetryTimerRef.current);
+      }
+      if (journeyAutoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(journeyAutoAdvanceTimerRef.current);
       }
       if (audioRef.current) {
         audioRef.current.pause();
@@ -4574,7 +4578,7 @@ export default function Home() {
     mutateJourneyState((state) => ({
       ...state,
       selectedChapterId: chapter.id,
-      selectedPartId: state.selectedChapterId === chapter.id ? state.selectedPartId : null,
+      selectedPartId: chapter.parts[0]?.id || null,
       activeLesson:
         state.activeLesson && state.activeLesson.chapterId === chapter.id ? state.activeLesson : null,
     }));
@@ -4653,6 +4657,19 @@ export default function Home() {
         ? {
             ...state.activeLesson,
             revealed: true,
+          }
+        : null,
+    }));
+  }
+
+  function toggleJourneyReadCard() {
+    if (!activeJourneyLesson || activeJourneyLesson.step !== "read") return;
+    mutateJourneyState((state) => ({
+      ...state,
+      activeLesson: state.activeLesson
+        ? {
+            ...state.activeLesson,
+            revealed: !state.activeLesson.revealed,
           }
         : null,
     }));
@@ -4801,11 +4818,11 @@ export default function Home() {
     return null;
   }
 
-  function submitJourneyAnswer() {
+  function submitJourneyValue(value: string) {
     if (!activeJourneyLesson || !activeJourneyContent) return;
     const expected = getCurrentJourneyExpectedAnswer();
     if (!expected) return;
-    const submitted = activeJourneyLesson.input.trim();
+    const submitted = value.trim();
     if (!submitted) return;
 
     const correct = matchesSurgeAnswer(submitted, expected, "target");
@@ -4821,6 +4838,7 @@ export default function Home() {
       activeLesson: state.activeLesson
         ? {
             ...state.activeLesson,
+            input: value,
             feedback: {
               status: correct ? "correct" : "wrong",
               expected,
@@ -4829,6 +4847,11 @@ export default function Home() {
           }
         : null,
     }));
+  }
+
+  function submitJourneyAnswer() {
+    if (!activeJourneyLesson) return;
+    submitJourneyValue(activeJourneyLesson.input);
   }
 
   function continueJourneyAnswer() {
@@ -5975,6 +5998,27 @@ export default function Home() {
     journeyInputRef.current?.focus();
   }, [journeyState]);
 
+  useEffect(() => {
+    const lesson = journeyState?.activeLesson;
+    if (journeyAutoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(journeyAutoAdvanceTimerRef.current);
+      journeyAutoAdvanceTimerRef.current = null;
+    }
+    if (!lesson?.feedback || lesson.feedback.status !== "correct" || lesson.completed) {
+      return;
+    }
+    journeyAutoAdvanceTimerRef.current = window.setTimeout(() => {
+      journeyAutoAdvanceTimerRef.current = null;
+      continueJourneyAnswer();
+    }, 650);
+    return () => {
+      if (journeyAutoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(journeyAutoAdvanceTimerRef.current);
+        journeyAutoAdvanceTimerRef.current = null;
+      }
+    };
+  }, [journeyState]);
+
   const targetLabel = language || "Target";
   const isBuddyChat = chatMode === "buddy";
   const hasBuddyConversation = isBuddyChat && messages.length > 0;
@@ -6375,6 +6419,450 @@ export default function Home() {
         <div className="journey-panel">
           <div className="home-vocab-empty">Choose a language first, then Journey can build the right lesson path.</div>
         </div>
+      ) : activeJourneyLesson && activeJourneyContent ? (
+        <section className="journey-focus-shell">
+          <div className="journey-focus-bar">
+            <button type="button" className="ghost" onClick={closeJourneyLesson}>
+              Back to chapter
+            </button>
+            <div className="journey-focus-meta">
+              <span>Chapter {selectedJourneyChapter?.index} - Part {selectedJourneyPart?.index}</span>
+              <span>{selectedJourneyPart?.title}</span>
+            </div>
+            <button type="button" className="ghost" onClick={() => void restartJourneyPart()}>
+              Restart
+            </button>
+          </div>
+
+          <section className="journey-panel journey-lesson-panel journey-lesson-panel-focus">
+            {activeJourneyLesson.completed ? (
+              <div className="journey-finish-card">
+                <div className="journey-panel-head">
+                  <div>
+                    <span className="journey-panel-kicker">Part complete</span>
+                    <h3>{selectedJourneyPart?.title}</h3>
+                  </div>
+                  <div className="journey-panel-meta">Saved</div>
+                </div>
+                <div className="journey-finish-copy">
+                  {activeJourneyContent.carryForwardNote || "This pattern is now ready to reappear inside later chapters."}
+                </div>
+                <div className="journey-finish-list">
+                  {collectJourneyLearnedSentences(activeJourneyContent).slice(0, 4).map((item) => (
+                    <div key={item.id} className="journey-finish-row">
+                      <div className="journey-finish-target">{item.target}</div>
+                      <div className="journey-finish-translation">{item.translation}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="journey-lesson-actions">
+                  <button type="button" className="ghost" onClick={() => void restartJourneyPart()}>
+                    Replay part
+                  </button>
+                  <button type="button" className="ghost" onClick={closeJourneyLesson}>
+                    Close
+                  </button>
+                  <button type="button" className="solid" onClick={openNextJourneyPart}>
+                    Next part
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="journey-panel-head">
+                  <div>
+                    <span className="journey-panel-kicker">
+                      Chapter {selectedJourneyChapter?.index} - Part {selectedJourneyPart?.index}
+                    </span>
+                    <h3>{selectedJourneyPart?.title}</h3>
+                  </div>
+                  <div className="journey-panel-meta">{JOURNEY_STEP_LABELS[activeJourneyLesson.step]}</div>
+                </div>
+
+                <div className="journey-step-track">
+                  {JOURNEY_STEP_ORDER.map((step) => {
+                    const done = activeJourneyProgress?.completedSteps.includes(step);
+                    const active = activeJourneyLesson.step === step;
+                    return (
+                      <div
+                        key={step}
+                        className={`journey-step-pill${done ? " done" : ""}${active ? " active" : ""}`}
+                      >
+                        <span>{JOURNEY_STEP_LABELS[step]}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="journey-lesson-copy">
+                  <div>{activeJourneyContent.summary || selectedJourneyPart?.summary}</div>
+                  <div>{activeJourneyContent.grammarFocus}</div>
+                </div>
+
+                {activeJourneyContent.carryForwardNote ? (
+                  <div className="journey-carry-note">{activeJourneyContent.carryForwardNote}</div>
+                ) : null}
+
+                {activeJourneyLesson.step === "read" && currentJourneyReadItem ? (
+                  <>
+                    <button
+                      type="button"
+                      className={`journey-card${activeJourneyLesson.revealed ? " revealed" : ""}`}
+                      onClick={toggleJourneyReadCard}
+                    >
+                      <div className="journey-card-label">Meaning</div>
+                      <div className="journey-card-translation">{currentJourneyReadItem.translation}</div>
+                      <div className="journey-card-label">Target</div>
+                      <div className="journey-card-target">
+                        {activeJourneyLesson.revealed ? currentJourneyReadItem.target : "Tap to flip"}
+                      </div>
+                    </button>
+                    <div className="journey-lesson-actions">
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => void playFlashcardAudio("journey", currentJourneyReadItem.target)}
+                      >
+                        Pronounce
+                      </button>
+                      <button
+                        type="button"
+                        className="solid"
+                        onClick={() =>
+                          activeJourneyLesson.revealed ? advanceJourneyReadItem() : revealJourneyReadItem()
+                        }
+                      >
+                        {activeJourneyLesson.revealed ? "Next" : "Reveal"}
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+
+                {activeJourneyLesson.step === "repeat" && activeJourneyLesson.repeatMode === "match" && activeJourneyLesson.match ? (
+                  <>
+                    <div className="journey-repeat-head">
+                      <span>Match the sentence pairs first.</span>
+                      <span>{activeJourneyLesson.match.matchedIds.length}/{activeJourneyContent.repeatItems.length}</span>
+                    </div>
+                    <div className="journey-match-grid">
+                      <div className="journey-match-column">
+                        {activeJourneyLesson.match.targets.map((itemId) => {
+                          const item = activeJourneyContent.repeatItems.find((entry) => entry.id === itemId);
+                          if (!item) return null;
+                          const matched = activeJourneyLesson.match?.matchedIds.includes(itemId);
+                          const selected = activeJourneyLesson.match?.selectedTargetId === itemId;
+                          return (
+                            <button
+                              key={`journey-target-${itemId}`}
+                              type="button"
+                              className={`journey-match-card${matched ? " matched" : ""}${selected ? " selected" : ""}`}
+                              onClick={() => chooseJourneyMatch("target", itemId)}
+                              disabled={matched}
+                            >
+                              {item.target}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="journey-match-column">
+                        {activeJourneyLesson.match.translations.map((itemId) => {
+                          const item = activeJourneyContent.repeatItems.find((entry) => entry.id === itemId);
+                          if (!item) return null;
+                          const matched = activeJourneyLesson.match?.matchedIds.includes(itemId);
+                          const selected = activeJourneyLesson.match?.selectedTranslationId === itemId;
+                          return (
+                            <button
+                              key={`journey-translation-${itemId}`}
+                              type="button"
+                              className={`journey-match-card${matched ? " matched" : ""}${selected ? " selected" : ""}`}
+                              onClick={() => chooseJourneyMatch("translation", itemId)}
+                              disabled={matched}
+                            >
+                              {item.translation}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+
+                {activeJourneyLesson.step === "repeat" && activeJourneyLesson.repeatMode === "type" && currentJourneyRepeatItem ? (
+                  <>
+                    <div className="journey-practice-card">
+                      <div className="journey-card-label">Repeat the sentence</div>
+                      <div className="journey-practice-source">{currentJourneyRepeatItem.target}</div>
+                      <div className="journey-practice-translation">{currentJourneyRepeatItem.translation}</div>
+                    </div>
+                    <div className="journey-answer-area">
+                      <div className="surge-input-wrap">
+                        <input
+                          ref={(node) => {
+                            journeyInputRef.current = node;
+                          }}
+                          type="text"
+                          value={activeJourneyLesson.input}
+                          onChange={(event) =>
+                            mutateJourneyState((state) => ({
+                              ...state,
+                              activeLesson: state.activeLesson
+                                ? {
+                                    ...state.activeLesson,
+                                    input: event.target.value,
+                                  }
+                                : null,
+                            }))
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              activeJourneyLesson.feedback ? continueJourneyAnswer() : submitJourneyAnswer();
+                            }
+                          }}
+                          placeholder="Type the same sentence"
+                        />
+                      </div>
+                      {activeJourneyLesson.feedback ? (
+                        <div className={`journey-feedback ${activeJourneyLesson.feedback.status}`}>
+                          <span>{activeJourneyLesson.feedback.status === "correct" ? "Good." : "Use this exact sentence."}</span>
+                          <strong>{activeJourneyLesson.feedback.expected}</strong>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="journey-lesson-actions">
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => void playFlashcardAudio("journey", currentJourneyRepeatItem.target)}
+                      >
+                        Pronounce
+                      </button>
+                      {!activeJourneyLesson.feedback || activeJourneyLesson.feedback.status === "wrong" ? (
+                        <button
+                          type="button"
+                          className="solid"
+                          onClick={() =>
+                            activeJourneyLesson.feedback ? continueJourneyAnswer() : submitJourneyAnswer()
+                          }
+                        >
+                          {activeJourneyLesson.feedback ? "Continue" : "Check"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+
+                {activeJourneyLesson.step === "change" && currentJourneyChangeItem ? (
+                  <>
+                    <div className="journey-practice-card">
+                      <div className="journey-card-label">Change one part</div>
+                      <div className="journey-practice-source blank">{currentJourneyChangeItem.template}</div>
+                      <div className="journey-practice-translation">{currentJourneyChangeItem.cue}</div>
+                      <div className="journey-practice-support">{currentJourneyChangeItem.translation}</div>
+                      {currentJourneyChangeItem.options?.length ? (
+                        <div className="journey-option-row">
+                          {currentJourneyChangeItem.options.map((option) => (
+                            <button
+                              key={option}
+                              type="button"
+                              className="ghost journey-option-chip"
+                              onClick={() => submitJourneyValue(option)}
+                            >
+                              {option}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="journey-answer-area">
+                      <div className="surge-input-wrap">
+                        <input
+                          ref={(node) => {
+                            journeyInputRef.current = node;
+                          }}
+                          type="text"
+                          value={activeJourneyLesson.input}
+                          onChange={(event) =>
+                            mutateJourneyState((state) => ({
+                              ...state,
+                              activeLesson: state.activeLesson
+                                ? {
+                                    ...state.activeLesson,
+                                    input: event.target.value,
+                                  }
+                                : null,
+                            }))
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              activeJourneyLesson.feedback ? continueJourneyAnswer() : submitJourneyAnswer();
+                            }
+                          }}
+                          placeholder="Type the missing word or phrase"
+                        />
+                      </div>
+                      {activeJourneyLesson.feedback ? (
+                        <div className={`journey-feedback ${activeJourneyLesson.feedback.status}`}>
+                          <span>{activeJourneyLesson.feedback.status === "correct" ? "Nice change." : "Use the missing part below."}</span>
+                          <strong>{activeJourneyLesson.feedback.expected}</strong>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="journey-lesson-actions">
+                      {!activeJourneyLesson.feedback || activeJourneyLesson.feedback.status === "wrong" ? (
+                        <button
+                          type="button"
+                          className="solid"
+                          onClick={() =>
+                            activeJourneyLesson.feedback ? continueJourneyAnswer() : submitJourneyAnswer()
+                          }
+                        >
+                          {activeJourneyLesson.feedback ? "Continue" : "Check"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+
+                {activeJourneyLesson.step === "build" && currentJourneyBuildItem ? (
+                  <>
+                    <div className="journey-practice-card">
+                      <div className="journey-card-label">Build the sentence</div>
+                      <div className="journey-build-cue">{currentJourneyBuildItem.cue}</div>
+                      <div className="journey-practice-support">
+                        {currentJourneyBuildItem.support || currentJourneyBuildItem.translation}
+                      </div>
+                    </div>
+                    <div className="journey-answer-area">
+                      <div className="surge-input-wrap">
+                        <input
+                          ref={(node) => {
+                            journeyInputRef.current = node;
+                          }}
+                          type="text"
+                          value={activeJourneyLesson.input}
+                          onChange={(event) =>
+                            mutateJourneyState((state) => ({
+                              ...state,
+                              activeLesson: state.activeLesson
+                                ? {
+                                    ...state.activeLesson,
+                                    input: event.target.value,
+                                  }
+                                : null,
+                            }))
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              activeJourneyLesson.feedback ? continueJourneyAnswer() : submitJourneyAnswer();
+                            }
+                          }}
+                          placeholder={`Write the full ${targetLabel} sentence`}
+                        />
+                      </div>
+                      {activeJourneyLesson.feedback ? (
+                        <div className={`journey-feedback ${activeJourneyLesson.feedback.status}`}>
+                          <span>{activeJourneyLesson.feedback.status === "correct" ? "That works." : "Use this full sentence."}</span>
+                          <strong>{activeJourneyLesson.feedback.expected}</strong>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="journey-lesson-actions">
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => void playFlashcardAudio("journey", currentJourneyBuildItem.answer)}
+                      >
+                        Pronounce
+                      </button>
+                      {!activeJourneyLesson.feedback || activeJourneyLesson.feedback.status === "wrong" ? (
+                        <button
+                          type="button"
+                          className="solid"
+                          onClick={() =>
+                            activeJourneyLesson.feedback ? continueJourneyAnswer() : submitJourneyAnswer()
+                          }
+                        >
+                          {activeJourneyLesson.feedback ? "Continue" : "Check"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+
+                {activeJourneyLesson.step === "use" && currentJourneyUseItem ? (
+                  <>
+                    <div className="journey-use-card">
+                      <div className="journey-card-label">Use it</div>
+                      <div className="journey-use-situation">{currentJourneyUseItem.situation}</div>
+                      <div className="journey-use-prompt">{currentJourneyUseItem.prompt}</div>
+                      {currentJourneyUseItem.support ? (
+                        <div className="journey-practice-support">{currentJourneyUseItem.support}</div>
+                      ) : null}
+                    </div>
+                    <div className="journey-answer-area">
+                      <div className="surge-input-wrap">
+                        <textarea
+                          ref={(node) => {
+                            journeyInputRef.current = node;
+                          }}
+                          value={activeJourneyLesson.input}
+                          onChange={(event) =>
+                            mutateJourneyState((state) => ({
+                              ...state,
+                              activeLesson: state.activeLesson
+                                ? {
+                                    ...state.activeLesson,
+                                    input: event.target.value,
+                                  }
+                                : null,
+                            }))
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" && !event.shiftKey) {
+                              event.preventDefault();
+                              activeJourneyLesson.feedback ? continueJourneyAnswer() : submitJourneyAnswer();
+                            }
+                          }}
+                          rows={3}
+                          placeholder="Reply naturally in the target language"
+                        />
+                      </div>
+                      {activeJourneyLesson.feedback ? (
+                        <div className={`journey-feedback ${activeJourneyLesson.feedback.status}`}>
+                          <span>{activeJourneyLesson.feedback.status === "correct" ? "Usable." : "A strong model answer is below."}</span>
+                          <strong>{activeJourneyLesson.feedback.expected}</strong>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="journey-lesson-actions">
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => void playFlashcardAudio("journey", currentJourneyUseItem.answer)}
+                      >
+                        Pronounce
+                      </button>
+                      {!activeJourneyLesson.feedback || activeJourneyLesson.feedback.status === "wrong" ? (
+                        <button
+                          type="button"
+                          className="solid"
+                          onClick={() =>
+                            activeJourneyLesson.feedback ? continueJourneyAnswer() : submitJourneyAnswer()
+                          }
+                        >
+                          {activeJourneyLesson.feedback ? "Finish part" : "Check"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+              </>
+            )}
+          </section>
+        </section>
       ) : (
         <div className="journey-layout">
           <section className="journey-panel journey-map-panel">
@@ -6401,14 +6889,14 @@ export default function Home() {
                     onClick={() => selectJourneyChapter(chapter.id)}
                   >
                     <span className="journey-node-orb">{chapter.index}</span>
-                    <span className="journey-node-card">
-                      <span className="journey-node-top">
+                    <div className="journey-node-card">
+                      <div className="journey-node-top">
                         <span className="journey-node-count">Chapter {chapter.index}</span>
                         <span className="journey-node-progress">{counts.completed}/{counts.total}</span>
-                      </span>
-                      <span className="journey-node-title">{chapter.title}</span>
-                      <span className="journey-node-body">{chapter.summary}</span>
-                    </span>
+                      </div>
+                      <div className="journey-node-title">{chapter.title}</div>
+                      <div className="journey-node-body">{chapter.summary}</div>
+                    </div>
                   </button>
                 );
               })}
@@ -6426,6 +6914,22 @@ export default function Home() {
                   {selectedJourneyChapter ? `${selectedJourneyChapter.parts.length} parts` : ""}
                 </div>
               </div>
+              {selectedJourneyChapter?.parts[0] ? (
+                <div className="journey-start-card">
+                  <div className="journey-start-copy">
+                    <span className="journey-panel-kicker">Start here</span>
+                    <h4>Part 1: {selectedJourneyChapter.parts[0].title}</h4>
+                    <p>{selectedJourneyChapter.parts[0].summary}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="solid"
+                    onClick={() => void openJourneyPart(selectedJourneyChapter.id, selectedJourneyChapter.parts[0].id)}
+                  >
+                    Start Part 1
+                  </button>
+                </div>
+              ) : null}
               {selectedJourneyChapter ? (
                 <div className="journey-parts-grid">
                   {selectedJourneyChapter.parts.map((part) => {
@@ -6494,12 +6998,18 @@ export default function Home() {
                 <div className="journey-empty-state">
                   <div className="journey-empty-title">{selectedJourneyPart.title}</div>
                   <div className="journey-empty-body">{selectedJourneyPart.summary}</div>
+                  <div className="journey-preview-meta">
+                    <span>{selectedJourneyPart.focus}</span>
+                    <span>
+                      {(journeyProgress[getJourneyPartKey(selectedJourneyChapter.id, selectedJourneyPart.id)]?.completedSteps.length || 0)}/5 steps
+                    </span>
+                  </div>
                   <button
                     type="button"
                     className="solid"
                     onClick={() => void openJourneyPart(selectedJourneyChapter.id, selectedJourneyPart.id)}
                   >
-                    Open part
+                    {selectedJourneyPart.index === 1 ? "Start Part 1" : `Start Part ${selectedJourneyPart.index}`}
                   </button>
                 </div>
               ) : activeJourneyLesson.completed ? (
