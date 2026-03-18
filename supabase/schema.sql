@@ -72,6 +72,15 @@ create table if not exists surge_sessions (
   unique (user_id, language)
 );
 
+create table if not exists journey_progress (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users on delete cascade,
+  language text not null,
+  progress_state jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now(),
+  unique (user_id, language)
+);
+
 alter table profiles add column if not exists languages text[] not null default '{}';
 alter table profiles add column if not exists active_language text;
 alter table user_vocab add column if not exists language text;
@@ -104,6 +113,9 @@ alter table surge_progress add column if not exists updated_at timestamptz not n
 alter table surge_sessions add column if not exists language text;
 alter table surge_sessions add column if not exists session_state jsonb not null default '{}'::jsonb;
 alter table surge_sessions add column if not exists updated_at timestamptz not null default now();
+alter table journey_progress add column if not exists language text;
+alter table journey_progress add column if not exists progress_state jsonb not null default '{}'::jsonb;
+alter table journey_progress add column if not exists updated_at timestamptz not null default now();
 
 alter table profiles enable row level security;
 alter table scenario_progress enable row level security;
@@ -111,6 +123,7 @@ alter table scenario_attempts enable row level security;
 alter table user_vocab enable row level security;
 alter table surge_progress enable row level security;
 alter table surge_sessions enable row level security;
+alter table journey_progress enable row level security;
 
 create policy "Profiles are self readable"
   on profiles for select
@@ -182,4 +195,16 @@ create policy "Surge sessions are self writable"
 
 create policy "Surge sessions are self updatable"
   on surge_sessions for update
+  using (auth.uid() = user_id);
+
+create policy "Journey progress is self readable"
+  on journey_progress for select
+  using (auth.uid() = user_id);
+
+create policy "Journey progress is self writable"
+  on journey_progress for insert
+  with check (auth.uid() = user_id);
+
+create policy "Journey progress is self updatable"
+  on journey_progress for update
   using (auth.uid() = user_id);
