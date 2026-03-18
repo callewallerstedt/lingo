@@ -3156,6 +3156,32 @@ textarea {
     padding: 14px;
   }
 
+  .journey-step-track,
+  .journey-lesson-copy,
+  .journey-carry-note,
+  .journey-repeat-head,
+  .journey-match-grid,
+  .journey-card,
+  .journey-practice-card,
+  .journey-use-card,
+  .journey-finish-card,
+  .journey-answer-area,
+  .journey-lesson-actions {
+    width: 100%;
+  }
+
+  .journey-card {
+    min-height: 260px;
+    padding: 22px 18px;
+  }
+
+  .journey-practice-card,
+  .journey-use-card,
+  .journey-finish-card {
+    min-height: 0;
+    padding: 18px 16px;
+  }
+
   .journey-preview-meta {
     flex-direction: column;
     align-items: flex-start;
@@ -3994,12 +4020,20 @@ textarea {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.1em;
+  width: min(100%, 760px);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .journey-match-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+  width: min(100%, 760px);
+  margin: 0 auto;
 }
 
 .journey-match-column {
@@ -4094,6 +4128,8 @@ textarea {
 .journey-answer-area {
   display: grid;
   gap: 10px;
+  width: min(100%, 680px);
+  margin: 0 auto;
 }
 
 .journey-lesson-panel-focus {
@@ -4120,6 +4156,51 @@ textarea {
   gap: 10px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.journey-step-track,
+.journey-lesson-copy,
+.journey-carry-note {
+  width: min(100%, 760px);
+  margin: 0 auto;
+}
+
+.journey-card-label {
+  justify-self: center;
+}
+
+.journey-card {
+  width: min(100%, 620px);
+  margin: 0 auto;
+  min-height: 340px;
+  padding: 28px 24px;
+}
+
+.journey-practice-card,
+.journey-use-card,
+.journey-finish-card {
+  width: min(100%, 760px);
+  margin: 0 auto;
+  min-height: 236px;
+  padding: 24px;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+}
+
+.journey-practice-source,
+.journey-practice-translation,
+.journey-practice-support,
+.journey-build-cue,
+.journey-use-prompt,
+.journey-use-situation {
+  max-width: 28ch;
+  margin: 0 auto;
+}
+
+.journey-option-row,
+.journey-lesson-actions {
+  justify-content: center;
 }
 
 .quick-chat-shell {
