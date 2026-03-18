@@ -3175,13 +3175,13 @@ export default function Home() {
     }
   }
 
-  function assignStudyFolder(index: number, folder: string | null) {
+  function assignStudyFolder(index: number, folder: string | null, archived = false) {
     const target = studyPack?.entries[index];
     setStudyPack((prev) => {
       if (!prev) return prev;
       return {
         ...prev,
-        entries: prev.entries.map((entry, i) => (i === index ? { ...entry, folder } : entry)),
+        entries: prev.entries.map((entry, i) => (i === index ? { ...entry, folder, archived } : entry)),
       };
     });
     if (target) {
@@ -3196,19 +3196,19 @@ export default function Home() {
           folder,
           count: 1,
           lastClicked: Date.now(),
-          archived: Boolean(target.archived),
+          archived,
         },
       ]);
     }
   }
 
-  function assignSentenceFolder(index: number, folder: string | null) {
+  function assignSentenceFolder(index: number, folder: string | null, archived = false) {
     const target = sentencePack?.entries[index];
     setSentencePack((prev) => {
       if (!prev) return prev;
       return {
         ...prev,
-        entries: prev.entries.map((entry, i) => (i === index ? { ...entry, folder } : entry)),
+        entries: prev.entries.map((entry, i) => (i === index ? { ...entry, folder, archived } : entry)),
       };
     });
     if (target) {
@@ -3223,7 +3223,7 @@ export default function Home() {
           folder,
           count: 1,
           lastClicked: Date.now(),
-          archived: Boolean(target.archived),
+          archived,
         },
       ]);
     }
@@ -3421,7 +3421,8 @@ export default function Home() {
     menuKey: string,
     folders: string[],
     currentFolder: string | null | undefined,
-    onSelect: (folder: string | null) => void
+    isArchived: boolean,
+    onSelect: (folder: string | null, archived?: boolean) => void
   ) {
     if (activeFolderMenu !== menuKey) {
       return null;
@@ -3432,11 +3433,21 @@ export default function Home() {
           type="button"
           className={`ghost vocab-folder-item${!currentFolder ? " active" : ""}`}
           onClick={() => {
-            onSelect(null);
+            onSelect(null, false);
             setActiveFolderMenu(null);
           }}
         >
           No folder
+        </button>
+        <button
+          type="button"
+          className={`ghost vocab-folder-item${isArchived ? " active" : ""}`}
+          onClick={() => {
+            onSelect(null, true);
+            setActiveFolderMenu(null);
+          }}
+        >
+          Archived
         </button>
         {folders.map((folder) => (
           <button
@@ -3444,7 +3455,7 @@ export default function Home() {
             type="button"
             className={`ghost vocab-folder-item${currentFolder === folder ? " active" : ""}`}
             onClick={() => {
-              onSelect(folder);
+              onSelect(folder, false);
               setActiveFolderMenu(null);
             }}
           >
@@ -3454,7 +3465,7 @@ export default function Home() {
         <button
           type="button"
           className="ghost vocab-folder-item create"
-          onClick={() => createFolderWithPrompt(onSelect)}
+          onClick={() => createFolderWithPrompt((folder) => onSelect(folder, false))}
         >
           + New folder
         </button>
@@ -6100,7 +6111,10 @@ export default function Home() {
                     const folderMenuKey = `common:${index}`;
                     // examples are shown in a modal
                     return (
-                      <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
+                      <div
+                        key={`${entry.word}-${index}`}
+                        className={`vocab-card-wrap${activeFolderMenu === folderMenuKey ? " folder-open" : ""}`}
+                      >
                         <div
                           className={`vocab-card ${flipped ? "flipped" : ""}`}
                           role="button"
@@ -6165,7 +6179,7 @@ export default function Home() {
                             </button>
                             <button
                               type="button"
-                              className={`vocab-card-icon ${entry.folder ? "active" : ""}`}
+                              className={`vocab-card-icon ${entry.folder || entry.archived ? "active" : ""}`}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 setActiveFolderMenu((current) => (current === folderMenuKey ? null : folderMenuKey));
@@ -6182,8 +6196,8 @@ export default function Home() {
                                 />
                               </svg>
                             </button>
-                            {renderFolderMenu(folderMenuKey, studyFolders, getEntryFolder(entry), (folder) =>
-                              assignStudyFolder(index, folder)
+                            {renderFolderMenu(folderMenuKey, studyFolders, getEntryFolder(entry), Boolean(entry.archived), (folder, archived) =>
+                              assignStudyFolder(index, folder, archived)
                             )}
                           </div>
                           <div className="vocab-card-face">
@@ -6373,7 +6387,10 @@ export default function Home() {
             const speechActive = speechPlayingKey === pronunciationKey || speechLoadingKey === pronunciationKey;
             const folderMenuKey = `sentence:${index}`;
             return (
-              <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
+              <div
+                key={`${entry.word}-${index}`}
+                className={`vocab-card-wrap${activeFolderMenu === folderMenuKey ? " folder-open" : ""}`}
+              >
                 <div
                   className={`vocab-card ${flipped ? "flipped" : ""}`}
                   role="button"
@@ -6426,7 +6443,7 @@ export default function Home() {
                     </button>
                     <button
                       type="button"
-                      className={`vocab-card-icon ${entry.folder ? "active" : ""}`}
+                      className={`vocab-card-icon ${entry.folder || entry.archived ? "active" : ""}`}
                       onClick={(event) => {
                         event.stopPropagation();
                         setActiveFolderMenu((current) => (current === folderMenuKey ? null : folderMenuKey));
@@ -6443,8 +6460,8 @@ export default function Home() {
                         />
                       </svg>
                     </button>
-                    {renderFolderMenu(folderMenuKey, sentenceFolders, getEntryFolder(entry), (folder) =>
-                      assignSentenceFolder(index, folder)
+                    {renderFolderMenu(folderMenuKey, sentenceFolders, getEntryFolder(entry), Boolean(entry.archived), (folder, archived) =>
+                      assignSentenceFolder(index, folder, archived)
                     )}
                   </div>
                   <div className="vocab-card-face">

@@ -656,7 +656,7 @@ textarea:focus {
   border-radius: 10px;
   background: var(--card-bg-strong);
   box-shadow: var(--shadow);
-  z-index: 30;
+  z-index: 120;
 }
 
 .vocab-folder-item {
@@ -677,6 +677,12 @@ textarea:focus {
   gap: 8px;
   align-items: stretch;
   width: 160px;
+  position: relative;
+  overflow: visible;
+}
+
+.vocab-card-wrap.folder-open {
+  z-index: 40;
 }
 
 .vocab-card-actions {
