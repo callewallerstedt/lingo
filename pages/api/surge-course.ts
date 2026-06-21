@@ -28,12 +28,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
   const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
-  const { language, goal, level } = body || {};
+  const { language, goal, level, learningContext } = body || {};
   if (!language) {
     res.status(400).json({ error: "Missing language" });
     return;
   }
   const goalText = typeof goal === "string" && goal.trim() ? goal.trim() : "everyday conversational fluency";
+  const contextText =
+    learningContext && typeof learningContext === "object"
+      ? JSON.stringify(learningContext).slice(0, 5000)
+      : "No prior learning context.";
 
   const prompt = [
     {
@@ -57,7 +61,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       content: [
         {
           type: "text" as const,
-          text: [`Target language: ${language}`, `Learner goal: ${goalText}`, `Level: ${level || "beginner"}`].join("\n"),
+          text: [
+            `Target language: ${language}`,
+            `Learner goal: ${goalText}`,
+            `Level: ${level || "beginner"}`,
+            `Existing learner context: ${contextText}`,
+            "Avoid rebuilding material already mastered. Sequence the next gaps through advanced comprehension, register, argument, narration, idioms, and scenario production where appropriate.",
+          ].join("\n"),
         },
       ],
     },

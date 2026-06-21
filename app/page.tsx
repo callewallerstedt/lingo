@@ -6,6 +6,7 @@ import type { Difficulty } from "../lib/store";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { SCENARIOS, type ScenarioDefinition } from "../lib/scenarios";
 import SurgeArc from "./SurgeArc";
+import LanguageKeyboard from "./LanguageKeyboard";
 import type { SaState } from "../lib/surgeArc";
 import type { LessonContent } from "../lib/lessons";
 import {
@@ -4987,6 +4988,18 @@ export default function Home() {
     submitJourneyValue(activeJourneyLesson.input);
   }
 
+  function setJourneyInput(value: string) {
+    mutateJourneyState((state) => ({
+      ...state,
+      activeLesson: state.activeLesson
+        ? {
+            ...state.activeLesson,
+            input: value,
+          }
+        : null,
+    }));
+  }
+
   function revealJourneyBuildHint() {
     if (!activeJourneyLesson || activeJourneyLesson.step !== "build" || activeJourneyLesson.feedback || !currentJourneyBuildItem) {
       return;
@@ -6546,11 +6559,8 @@ export default function Home() {
                   ))}
                 </div>
                 <div className="journey-lesson-actions">
-                  <button type="button" className="ghost" onClick={() => void restartJourneyPart()}>
-                    Replay part
-                  </button>
                   <button type="button" className="ghost" onClick={closeJourneyLesson}>
-                    Back to path
+                    Path
                   </button>
                   <button type="button" className="solid" onClick={openNextJourneyPart}>
                     Next part
@@ -6576,13 +6586,6 @@ export default function Home() {
                   </div>
                 </button>
                 <div className="journey-lesson-actions">
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => void playFlashcardAudio("journey", currentJourneyReadItem.target)}
-                  >
-                    Pronounce
-                  </button>
                   <button
                     type="button"
                     className="solid"
@@ -6686,7 +6689,17 @@ export default function Home() {
                         }
                       }}
                       placeholder="Type the same sentence"
+                      inputMode="none"
                     />
+                    {!activeJourneyLesson.feedback ? (
+                      <LanguageKeyboard
+                        language={language || "English"}
+                        value={activeJourneyLesson.input}
+                        answer={currentJourneyRepeatItem.target}
+                        onChange={setJourneyInput}
+                        onSubmit={submitJourneyAnswer}
+                      />
+                    ) : null}
                   </div>
                   {!activeJourneyLesson.feedback ? (
                     <div className="journey-choice-helper">Type the exact sentence, then press Enter.</div>
@@ -6702,13 +6715,6 @@ export default function Home() {
                   ) : null}
                 </div>
                 <div className="journey-lesson-actions">
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => void playFlashcardAudio("journey", currentJourneyRepeatItem.target)}
-                  >
-                    Pronounce
-                  </button>
                   {!activeJourneyLesson.feedback || activeJourneyLesson.feedback.status === "wrong" ? (
                     <button
                       type="button"
@@ -6812,7 +6818,17 @@ export default function Home() {
                         }
                       }}
                       placeholder={`Write the full ${targetLabel} sentence`}
+                      inputMode="none"
                     />
+                    {!activeJourneyLesson.feedback ? (
+                      <LanguageKeyboard
+                        language={language || "English"}
+                        value={activeJourneyLesson.input}
+                        answer={currentJourneyBuildItem.answer}
+                        onChange={setJourneyInput}
+                        onSubmit={submitJourneyAnswer}
+                      />
+                    ) : null}
                   </div>
                   {activeJourneyLesson.hintCount > 0 && !activeJourneyLesson.feedback ? (
                     <div className="surge-hint">
@@ -6858,13 +6874,6 @@ export default function Home() {
                   ) : null}
                 </div>
                 <div className="journey-lesson-actions">
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => void playFlashcardAudio("journey", currentJourneyBuildItem.answer)}
-                  >
-                    Pronounce
-                  </button>
                   {!activeJourneyLesson.feedback ? (
                     <button
                       type="button"
@@ -6928,7 +6937,17 @@ export default function Home() {
                       }}
                       rows={3}
                       placeholder="Reply naturally in the target language"
+                      inputMode="none"
                     />
+                    {!activeJourneyLesson.feedback ? (
+                      <LanguageKeyboard
+                        language={language || "English"}
+                        value={activeJourneyLesson.input}
+                        answer={currentJourneyUseItem.answer}
+                        onChange={setJourneyInput}
+                        onSubmit={submitJourneyAnswer}
+                      />
+                    ) : null}
                   </div>
                   {!activeJourneyLesson.feedback ? (
                     <div className="journey-choice-helper">Give one natural reply in the target language.</div>
@@ -6943,13 +6962,6 @@ export default function Home() {
                   ) : null}
                 </div>
                 <div className="journey-lesson-actions">
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => void playFlashcardAudio("journey", currentJourneyUseItem.answer)}
-                  >
-                    Pronounce
-                  </button>
                   {!activeJourneyLesson.feedback || activeJourneyLesson.feedback.status === "wrong" ? (
                     <button
                       type="button"
@@ -7200,8 +7212,8 @@ export default function Home() {
       <div className="journey-header">
         <div className="journey-header-copy">
           <div className="journey-kicker">Journey</div>
-          <h2>Clear chapters. Short parts. Real recall.</h2>
-          <p>Journey keeps each part focused: one useful idea, five clear stages, and fuller practice inside each one.</p>
+          <h2>Your language path</h2>
+          <p>Open the next part and keep moving. Progress saves automatically.</p>
         </div>
         <div className="journey-header-actions">
           {journeyRecommendation.chapterId && journeyRecommendation.partId ? (
@@ -7214,22 +7226,16 @@ export default function Home() {
               {journeyRecommendation.label}
             </button>
           ) : null}
-          <button
-            type="button"
-            className="ghost"
-            onClick={resetJourneyProgress}
-            disabled={!language || journeyLoading}
-          >
-            Reset journey
-          </button>
           <div className="journey-stat-chip">
             <strong>{journeyCompletedCount}/{JOURNEY_TOTAL_PARTS}</strong>
             <span>completed</span>
           </div>
-          <div className="journey-stat-chip">
-            <strong>{journeyStartedCount}</strong>
-            <span>started</span>
-          </div>
+          <details className="journey-more">
+            <summary aria-label="Journey options">•••</summary>
+            <button type="button" onClick={resetJourneyProgress} disabled={!language || journeyLoading}>
+              Reset progress
+            </button>
+          </details>
         </div>
       </div>
 
@@ -7239,9 +7245,9 @@ export default function Home() {
         </div>
       ) : activeJourneyLesson && activeJourneyContent ? (
         <section className="journey-focus-shell">
-          <div className="journey-focus-bar">
-            <button type="button" className="ghost" onClick={closeJourneyLesson}>
-              Back to path
+          <div className="journey-focus-bar journey-focus-bar-simple">
+            <button type="button" className="journey-focus-close" onClick={closeJourneyLesson} aria-label="Close lesson">
+              ×
             </button>
             <div className="journey-focus-summary">
               <div className="journey-focus-kicker">
@@ -7260,82 +7266,41 @@ export default function Home() {
                 <span style={{ width: `${activeJourneyStepPercent}%` }} />
               </div>
             </div>
-            <div className="journey-focus-actions">
-              <div className="journey-focus-meta">
-                {activeJourneyLesson.completed ? "Saved" : JOURNEY_STEP_LABELS[activeJourneyLesson.step]}
-              </div>
-              <button
-                type="button"
-                className="ghost"
-                onClick={() => void regenerateJourneyPart(activeJourneyContent.chapterId, activeJourneyContent.partId)}
-              >
+            <details className="journey-more journey-focus-more">
+              <summary aria-label="Lesson options">•••</summary>
+              <button type="button" onClick={() => void restartJourneyPart()}>Restart part</button>
+              <button type="button" onClick={() => void regenerateJourneyPart(activeJourneyContent.chapterId, activeJourneyContent.partId)}>
                 Regenerate
               </button>
-              <button type="button" className="ghost" onClick={() => void restartJourneyPart()}>
-                Restart
-              </button>
-            </div>
+            </details>
           </div>
 
-          <section className="journey-panel journey-lesson-panel journey-lesson-panel-focus">
-            {activeJourneyLesson.completed ? (
-              journeyLessonStepContent
-            ) : (
-              <div className="journey-lesson-layout">
-                <div className="journey-lesson-main">
-                  <div className="journey-lesson-head">
-                    <div>
-                      <span className="journey-panel-kicker">
-                        Step {activeJourneyStepNumber} of {JOURNEY_STEP_ORDER.length}
-                      </span>
-                      <h3>{selectedJourneyPart?.title}</h3>
-                      <p className="journey-lesson-subtitle">
-                        {activeJourneyStepPreviewCopy[activeJourneyLesson.step].description}
-                      </p>
-                    </div>
-                    <div className="journey-lesson-badge">{JOURNEY_STEP_LABELS[activeJourneyLesson.step]}</div>
-                  </div>
-
-                  <div className="journey-step-track">
-                    {JOURNEY_STEP_ORDER.map((step) => {
-                      const done = activeJourneyProgress?.completedSteps.includes(step);
-                      const active = activeJourneyLesson.step === step;
-                      return (
-                        <div
-                          key={step}
-                          className={`journey-step-pill${done ? " done" : ""}${active ? " active" : ""}`}
-                        >
-                          <span>{JOURNEY_STEP_LABELS[step]}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {journeyLessonStepContent}
-                </div>
-
-                <aside className="journey-lesson-sidebar">
-                  <div className="journey-lesson-copy-card">
-                    <span className="journey-panel-kicker">Goal</span>
-                    <div>{activeJourneyContent.summary || selectedJourneyPart?.summary}</div>
-                  </div>
-                  <div className="journey-lesson-copy-card">
-                    <span className="journey-panel-kicker">Focus</span>
-                    <div>{activeJourneyContent.grammarFocus}</div>
-                  </div>
-                  {activeJourneyContent.carryForwardNote ? (
-                    <div className="journey-lesson-copy-card journey-lesson-tip-card">
-                      <span className="journey-panel-kicker">Tip</span>
-                      <div>{activeJourneyContent.carryForwardNote}</div>
-                    </div>
-                  ) : null}
-                </aside>
+          <section className="journey-panel journey-lesson-panel journey-lesson-panel-focus journey-lesson-panel-simple">
+            {!activeJourneyLesson.completed ? (
+              <div className="journey-step-track journey-step-track-simple" aria-label={`Step ${activeJourneyStepNumber} of ${JOURNEY_STEP_ORDER.length}`}>
+                {JOURNEY_STEP_ORDER.map((step) => {
+                  const done = activeJourneyProgress?.completedSteps.includes(step);
+                  const active = activeJourneyLesson.step === step;
+                  return <span key={step} className={`${done ? "done" : ""}${active ? " active" : ""}`} title={JOURNEY_STEP_LABELS[step]} />;
+                })}
               </div>
-            )}
+            ) : null}
+            {journeyLessonStepContent}
           </section>
         </section>
       ) : (
         <div className="journey-layout">
+          {journeyLoading ? (
+            <div className="journey-path-overlay">
+              <BusyLabel label="Preparing your part" />
+              <span>Building the next practice flow…</span>
+            </div>
+          ) : journeyError ? (
+            <div className="journey-path-overlay error">
+              <strong>Journey could not open that part.</strong>
+              <span>{journeyError}</span>
+            </div>
+          ) : null}
           <section className="journey-panel journey-rail-panel">
             <div className="journey-panel-head">
               <div>
@@ -7433,7 +7398,7 @@ export default function Home() {
                         key={part.id}
                         type="button"
                         className={`journey-part-row${active ? " active" : ""}${record?.status === "completed" ? " complete" : ""}`}
-                        onClick={() => selectJourneyPartPreview(selectedJourneyChapter.id, part.id)}
+                        onClick={() => void openJourneyPart(selectedJourneyChapter.id, part.id)}
                         aria-pressed={active}
                       >
                         <div className="journey-part-badge">{part.index}</div>

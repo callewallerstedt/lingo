@@ -15,6 +15,9 @@ type LessonsPanelProps = {
   onClose: () => void;
   loadRemote?: (language: string) => Promise<LessonsMap | null>;
   saveRemote?: (language: string, content: LessonContent) => void;
+  initialOpenId?: string | null;
+  completedIds?: string[];
+  onToggleComplete?: (topicId: string) => void;
 };
 
 function storageKey(language: string): string {
@@ -42,9 +45,17 @@ function saveLocal(language: string, map: LessonsMap): void {
   }
 }
 
-export default function LessonsPanel({ language, onClose, loadRemote, saveRemote }: LessonsPanelProps) {
+export default function LessonsPanel({
+  language,
+  onClose,
+  loadRemote,
+  saveRemote,
+  initialOpenId = null,
+  completedIds = [],
+  onToggleComplete,
+}: LessonsPanelProps) {
   const [lessons, setLessons] = useState<LessonsMap>(() => loadLocal(language));
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(initialOpenId);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [errorId, setErrorId] = useState<string | null>(null);
   const loadRemoteRef = useRef(loadRemote);
@@ -60,7 +71,7 @@ export default function LessonsPanel({ language, onClose, loadRemote, saveRemote
 
   useEffect(() => {
     setLessons(loadLocal(language));
-    setOpenId(null);
+    setOpenId(initialOpenId);
     let cancelled = false;
     (async () => {
       const load = loadRemoteRef.current;
@@ -83,7 +94,7 @@ export default function LessonsPanel({ language, onClose, loadRemote, saveRemote
     return () => {
       cancelled = true;
     };
-  }, [language]);
+  }, [initialOpenId, language]);
 
   const generate = async (topic: LessonTopic) => {
     if (busyId) return;
@@ -131,21 +142,30 @@ export default function LessonsPanel({ language, onClose, loadRemote, saveRemote
               <button type="button" className="lx-back" onClick={() => setOpenId(null)}>
                 ‹ Lessons
               </button>
-              <button type="button" className="lx-regen" onClick={() => generate(openTopic)} disabled={busyId !== null}>
-                {busyId === openTopic.id ? (
-                  <span className="lx-busy-label">
-                    <span className="lx-spin dark" aria-hidden="true" />
-                    Regenerating
-                  </span>
-                ) : (
-                  "Regenerate"
+              <div className="lx-head-actions">
+                {onToggleComplete && (
+                  <button
+                    type="button"
+                    className={`lx-complete ${completedIds.includes(openTopic.id) ? "done" : ""}`}
+                    onClick={() => onToggleComplete(openTopic.id)}
+                  >
+                    {completedIds.includes(openTopic.id) ? "Completed ✓" : "Mark complete"}
+                  </button>
                 )}
-              </button>
+                <button type="button" className="lx-regen" onClick={() => generate(openTopic)} disabled={busyId !== null}>
+                  {busyId === openTopic.id ? (
+                    <span className="lx-busy-label">
+                      <span className="lx-spin dark" aria-hidden="true" />
+                      Regenerating
+                    </span>
+                  ) : (
+                    "Regenerate"
+                  )}
+                </button>
+              </div>
             </div>
             <div className="lx-md">
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
-                {open.markdown}
-              </ReactMarkdown>
+              <InteractiveLessonMarkdown markdown={open.markdown} title={openTopic.title} />
             </div>
           </>
         ) : (
@@ -209,6 +229,55 @@ export default function LessonsPanel({ language, onClose, loadRemote, saveRemote
   );
 }
 
+function MarkdownBlock({ children }: { children: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+      {children}
+    </ReactMarkdown>
+  );
+}
+
+function InteractiveLessonMarkdown({ markdown, title }: { markdown: string; title: string }) {
+  const source = /(^|\n)##\s+Quick practice\b/i.test(markdown)
+    ? markdown
+    : `${markdown}\n\n## Quick practice\n\n1. Write one short example using ${title}.\nAnswer: Compare your sentence with the Forms and Examples sections above.\n\n2. Change that example to a different person or number.\nAnswer: Check that the subject and form agree with the reference table.\n\n3. Say the same idea as a question or negative sentence.\nAnswer: Use the question or negation pattern explained in this lesson.`;
+  const blocks: Array<{ type: "markdown" | "answer"; value: string }> = [];
+  const buffer: string[] = [];
+  let inPractice = false;
+  const flush = () => {
+    const value = buffer.join("\n").trim();
+    if (value) blocks.push({ type: "markdown", value });
+    buffer.length = 0;
+  };
+  for (const line of source.split("\n")) {
+    if (/^##\s+Quick practice\b/i.test(line.trim())) inPractice = true;
+    const answer = inPractice ? line.match(/^\s*Answer:\s*(.+)\s*$/i) : null;
+    if (answer) {
+      flush();
+      blocks.push({ type: "answer", value: answer[1] });
+    } else {
+      buffer.push(line);
+    }
+  }
+  flush();
+  return (
+    <>
+      {blocks.map((block, index) =>
+        block.type === "answer" ? (
+          <details className="lx-answer" key={`${block.type}-${index}`}>
+            <summary>Show answer</summary>
+            <div className="lx-answer-body">
+              <MarkdownBlock>{block.value}</MarkdownBlock>
+            </div>
+          </details>
+        ) : (
+          <MarkdownBlock key={`${block.type}-${index}`}>{block.value}</MarkdownBlock>
+        )
+      )}
+    </>
+  );
+}
+
 function LessonStyles() {
   return <style dangerouslySetInnerHTML={{ __html: LX_CSS }} />;
 }
@@ -218,9 +287,11 @@ const LX_CSS = `
 .lx-modal{background:var(--nx-surface,#fff);border:1px solid var(--nx-line,#eceef4);border-radius:22px;padding:18px;max-width:680px;width:100%;max-height:calc(100dvh - max(28px,env(safe-area-inset-top)) - max(28px,env(safe-area-inset-bottom)));margin:0 auto;box-shadow:var(--nx-shadow,0 16px 36px -22px rgba(30,40,90,.28));overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
 .lx-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px;position:sticky;top:-18px;z-index:3;background:var(--nx-surface,#fff);padding:18px 0 10px;}
 .lx-title{font-weight:800;font-size:18px;}
-.lx-close,.lx-back,.lx-regen{background:var(--nx-surface2,#f5f7fb);border:1px solid var(--nx-line,#eceef4);color:var(--nx-ink,#0b0e17);border-radius:11px;padding:9px 14px;font-weight:600;font-size:14px;cursor:pointer;min-height:42px;}
+.lx-close,.lx-back,.lx-regen,.lx-complete{background:var(--nx-surface2,#f5f7fb);border:1px solid var(--nx-line,#eceef4);color:var(--nx-ink,#0b0e17);border-radius:11px;padding:9px 14px;font-weight:600;font-size:14px;cursor:pointer;min-height:42px;}
 .lx-back{font-weight:700;}
 .lx-regen{color:var(--nx-accent,#5b5bf6);}
+.lx-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;}
+.lx-complete.done{color:#047857;background:rgba(16,185,129,.09);border-color:rgba(16,185,129,.24);}
 .lx-sub{color:var(--nx-ink2,#6b7384);font-size:13px;margin:0 0 14px;}
 .lx-group{margin-bottom:16px;}
 .lx-group-title{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--nx-ink2,#6b7384);margin-bottom:8px;}
@@ -263,10 +334,18 @@ const LX_CSS = `
 .lx-md hr{border:none;border-top:1px solid var(--nx-line,#eceef4);margin:16px 0;}
 .lx-md .katex{font-size:1.05em;}
 .lx-md .katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0;}
+.lx-answer{margin:10px 0 14px;border:1px solid var(--nx-line,#eceef4);border-radius:13px;background:var(--nx-surface2,#f5f7fb);overflow:hidden;}
+.lx-answer summary{cursor:pointer;padding:12px 14px;color:var(--nx-accent,#5b5bf6);font-weight:750;list-style:none;display:flex;align-items:center;justify-content:space-between;}
+.lx-answer summary::-webkit-details-marker{display:none;}
+.lx-answer summary::after{content:"+";font-size:20px;line-height:1;}
+.lx-answer[open] summary::after{content:"−";}
+.lx-answer-body{padding:0 14px 12px;border-top:1px solid var(--nx-line,#eceef4);}
 @media (max-width:640px){
   .lx-overlay{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);background:var(--nx-surface,#fff);backdrop-filter:none;overflow:hidden;}
   .lx-modal{max-width:none;max-height:none;height:calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));border:0;border-radius:0;padding:14px 14px 28px;margin:0;box-shadow:none;}
   .lx-head{top:-14px;padding:14px 0 10px;}
+  .lx-head-actions{gap:6px;}
+  .lx-complete,.lx-regen{padding-inline:10px;font-size:12.5px;}
   .lx-item{align-items:stretch;padding:12px;gap:8px;}
   .lx-item-main{display:flex;align-items:center;}
   .lx-gen,.lx-view{min-width:92px;padding-inline:12px;}
