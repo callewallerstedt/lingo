@@ -267,17 +267,24 @@ function MarkdownBlock({ children }: { children: string }) {
 }
 
 function decodeLegacyEntities(value: string): string {
-  return value
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, "\"")
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&");
+  let decoded = value;
+  for (let index = 0; index < 3; index += 1) {
+    const next = decoded
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, "\"")
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, "&");
+    if (next === decoded) break;
+    decoded = next;
+  }
+  return decoded;
 }
 
 function legacyAnswerToMarkdown(value: string): string {
   return decodeLegacyEntities(value)
     .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<summary\b[^>]*>[\s\S]*?<\/summary>/gi, "")
     .replace(/<\/(?:p|div|li)>/gi, "\n")
     .replace(/<[^>]+>/g, "")
     .replace(/\n{3,}/g, "\n\n")
@@ -299,7 +306,14 @@ function normalizeLessonSource(markdown: string): string {
     /<button\b[^>]*>\s*(?:show\s+answer|answer)\s*<\/button>\s*([\s\S]*?)(?=\n\s*(?:\d+[.)]\s+|[-*]\s+|#{1,6}\s+|<button\b|<details\b)|$)/gi,
     (_match, body: string) => `\nAnswer: ${legacyAnswerToMarkdown(body)}\n`
   );
-  return source.replace(/<\/?(?:p|div|section|article)\b[^>]*>/gi, "\n").replace(/\n{4,}/g, "\n\n\n");
+  source = source
+    .replace(/<summary\b[^>]*>\s*(?:show\s+answer|answer)\s*<\/summary>/gi, "\nAnswer: ")
+    .replace(/<\/?details\b[^>]*>/gi, "\n")
+    .replace(/<button\b[^>]*>\s*(?:show\s+answer|answer)\s*<\/button>/gi, "\nAnswer: ")
+    .replace(/<\/?(?:p|div|section|article|span)\b[^>]*>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "");
+  return source.replace(/\n{4,}/g, "\n\n\n");
 }
 
 function InteractiveLessonMarkdown({ markdown, title }: { markdown: string; title: string }) {
@@ -309,22 +323,38 @@ function InteractiveLessonMarkdown({ markdown, title }: { markdown: string; titl
     : `${normalizedMarkdown}\n\n## Quick practice\n\n1. Write one short example using ${title}.\nAnswer: Compare your sentence with the Forms and Examples sections above.\n\n2. Change that example to a different person or number.\nAnswer: Check that the subject and form agree with the reference table.\n\n3. Say the same idea as a question or negative sentence.\nAnswer: Use the question or negation pattern explained in this lesson.`;
   const blocks: Array<{ type: "markdown" | "answer"; value: string }> = [];
   const buffer: string[] = [];
+  let answerBuffer: string[] | null = null;
   let inPractice = false;
   const flush = () => {
     const value = buffer.join("\n").trim();
     if (value) blocks.push({ type: "markdown", value });
     buffer.length = 0;
   };
+  const flushAnswer = () => {
+    if (!answerBuffer) return;
+    const value = answerBuffer.join("\n").trim();
+    if (value) blocks.push({ type: "answer", value });
+    answerBuffer = null;
+  };
+  const isPracticeBoundary = (line: string) =>
+    /^\s*(?:\d+[.)]\s+|[-*]\s+|#{1,6}\s+)/.test(line) || /^##\s+Quick practice\b/i.test(line.trim());
   for (const line of source.split("\n")) {
+    if (answerBuffer && isPracticeBoundary(line)) {
+      flushAnswer();
+    }
     if (/^##\s+Quick practice\b/i.test(line.trim())) inPractice = true;
     const answer = inPractice ? line.match(/^\s*Answer:\s*(.*)\s*$/i) : null;
     if (answer) {
       flush();
-      blocks.push({ type: "answer", value: answer[1] });
+      flushAnswer();
+      answerBuffer = [answer[1]];
+    } else if (answerBuffer) {
+      answerBuffer.push(line);
     } else {
       buffer.push(line);
     }
   }
+  flushAnswer();
   flush();
   return (
     <>

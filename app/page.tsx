@@ -7,7 +7,8 @@ import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { SCENARIOS, type ScenarioDefinition } from "../lib/scenarios";
 import SurgeArc from "./SurgeArc";
 import LanguageKeyboard from "./LanguageKeyboard";
-import type { SaState } from "../lib/surgeArc";
+import { saCreateState, saLoadState, saSaveState, type SaState } from "../lib/surgeArc";
+import { saStarterDeck } from "../lib/surgeDecks";
 import type { LessonContent } from "../lib/lessons";
 import {
   DEFAULT_SURGE_MODE_PREFERENCES,
@@ -172,6 +173,8 @@ type SuggestionPayload = {
 type VocabScope = "chat" | "common" | "sentence" | "scenario" | "topic" | "surge" | "example" | "quick" | "journey";
 type ExampleScope = "chat" | "common" | "scenario" | "topic";
 type ThemeMode = "dark" | "light";
+type UiDensity = "comfortable" | "compact";
+type AccentTone = "blue" | "gold" | "rose";
 type ChatMode = "scenario" | "buddy";
 
 type ExampleItem = {
@@ -225,6 +228,46 @@ type JourneyPersistedRow = {
   updated_at?: string | null;
 };
 
+const AI_ENDPOINT_LABELS: Record<string, string> = {
+  "/api/chat": "AI chat is replying",
+  "/api/check-task": "AI is checking your answer",
+  "/api/examples": "AI is generating examples",
+  "/api/feedback": "AI is reviewing your message",
+  "/api/generate-scene": "AI is building a scene",
+  "/api/generate-task": "AI is generating a task",
+  "/api/journey-part": "AI is preparing Journey",
+  "/api/lesson": "AI is generating a lesson",
+  "/api/quick-chat": "AI is answering",
+  "/api/scenario": "AI is setting up a scenario",
+  "/api/suggest": "AI is choosing the next move",
+  "/api/surge-course": "AI is designing your course",
+  "/api/surge-generate": "AI is generating new material",
+  "/api/surge-items": "AI is preparing Surge",
+  "/api/transcribe": "AI is transcribing",
+  "/api/translate": "AI is translating",
+  "/api/tts": "AI is generating audio",
+  "/api/vocab-list": "AI is generating vocabulary",
+};
+
+function getAiFetchLabel(input: RequestInfo | URL): string | null {
+  const raw =
+    typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : typeof input.url === "string"
+          ? input.url
+          : "";
+  if (!raw) return null;
+  let path = raw;
+  try {
+    path = new URL(raw, window.location.origin).pathname;
+  } catch {
+    path = raw.split("?")[0] || raw;
+  }
+  return AI_ENDPOINT_LABELS[path] || null;
+}
+
 function BusyLabel({ label }: { label: string }) {
   return (
     <span className="app-busy-label" role="status" aria-live="polite">
@@ -232,6 +275,14 @@ function BusyLabel({ label }: { label: string }) {
       <span>{label}</span>
     </span>
   );
+}
+
+function isNestedCardControl(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest("button,a,input,textarea,select,.vocab-card-actions,[data-card-control='true']"));
+}
+
+function stopNestedCardControl(event: { stopPropagation: () => void }) {
+  event.stopPropagation();
 }
 
 export default function Home() {
@@ -246,6 +297,11 @@ export default function Home() {
   const [newLanguageInput, setNewLanguageInput] = useState<string>("");
   const [addLanguageOpen, setAddLanguageOpen] = useState<boolean>(false);
   const [theme, setTheme] = useState<ThemeMode>("dark");
+  const [uiDensity, setUiDensity] = useState<UiDensity>("comfortable");
+  const [accentTone, setAccentTone] = useState<AccentTone>("blue");
+  const [surgeDailyGoal, setSurgeDailyGoal] = useState<number>(40);
+  const [aiPendingCount, setAiPendingCount] = useState<number>(0);
+  const [aiPendingLabel, setAiPendingLabel] = useState<string>("AI is working");
   const [isCompactViewport, setIsCompactViewport] = useState<boolean>(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [mobileVocabTools, setMobileVocabTools] = useState<{
@@ -268,7 +324,16 @@ export default function Home() {
   const [loadingProgress, setLoadingProgress] = useState<boolean>(false);
 
   const [view, setView] = useState<
-    "dashboard" | "journey" | "chat" | "common" | "sentences" | "scenario-vocab" | "scenario-detail" | "topic-detail" | "surge"
+    | "dashboard"
+    | "journey"
+    | "settings"
+    | "chat"
+    | "common"
+    | "sentences"
+    | "scenario-vocab"
+    | "scenario-detail"
+    | "topic-detail"
+    | "surge"
   >("dashboard");
   const [activeScenario, setActiveScenario] = useState<ScenarioDefinition | null>(null);
   const [taskText, setTaskText] = useState<string>("");
@@ -431,6 +496,8 @@ export default function Home() {
     const savedSurgeModes = localStorage.getItem(SURGE_MODE_KEY);
     const savedUsername = localStorage.getItem("lingoarc_username");
     const savedTheme = localStorage.getItem("lingoarc_theme");
+    const savedDensity = localStorage.getItem("lingoarc_ui_density");
+    const savedAccent = localStorage.getItem("lingoarc_accent");
     if (savedVocab) {
       try {
         const parsed = JSON.parse(savedVocab) as VocabEntry[];
@@ -483,6 +550,12 @@ export default function Home() {
     if (savedTheme === "light" || savedTheme === "dark") {
       setTheme(savedTheme);
     }
+    if (savedDensity === "comfortable" || savedDensity === "compact") {
+      setUiDensity(savedDensity);
+    }
+    if (savedAccent === "blue" || savedAccent === "gold" || savedAccent === "rose") {
+      setAccentTone(savedAccent);
+    }
     if (savedSentencePack) {
       try {
         const parsed = JSON.parse(savedSentencePack) as StudyPack;
@@ -529,6 +602,62 @@ export default function Home() {
     localStorage.setItem("lingoarc_theme", theme);
     document.body.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem("lingoarc_ui_density", uiDensity);
+    document.body.dataset.density = uiDensity;
+  }, [uiDensity]);
+
+  useEffect(() => {
+    localStorage.setItem("lingoarc_accent", accentTone);
+    document.body.dataset.accent = accentTone;
+  }, [accentTone]);
+
+  useEffect(() => {
+    let active = true;
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const label = getAiFetchLabel(args[0]);
+      if (label) {
+        setAiPendingLabel(label);
+        setAiPendingCount((count) => count + 1);
+      }
+      try {
+        return await originalFetch(...args);
+      } finally {
+        if (label && active) {
+          setAiPendingCount((count) => Math.max(0, count - 1));
+        }
+      }
+    };
+    return () => {
+      active = false;
+      window.fetch = originalFetch;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function syncGoal() {
+      if (!language) {
+        setSurgeDailyGoal(40);
+        return;
+      }
+      const local = saLoadState(language);
+      let nextGoal = local?.profile.dailyGoal || 40;
+      if (authUser) {
+        const remote = await loadSurgeArcRemote(language);
+        if (!cancelled && remote?.profile?.dailyGoal) {
+          nextGoal = remote.profile.dailyGoal;
+        }
+      }
+      if (!cancelled) setSurgeDailyGoal(nextGoal);
+    }
+    void syncGoal();
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser, language]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(max-width: 720px)");
@@ -5086,6 +5215,23 @@ export default function Home() {
     setView("surge");
   }
 
+  function updateSurgeDailyGoal(nextValue: number) {
+    if (!language) return;
+    const safeGoal = Math.max(5, Math.min(200, Math.round(nextValue)));
+    setSurgeDailyGoal(safeGoal);
+    const base = saLoadState(language) || saCreateState(language, saStarterDeck(language));
+    const next: SaState = {
+      ...base,
+      profile: {
+        ...base.profile,
+        dailyGoal: safeGoal,
+      },
+      updatedAt: Date.now(),
+    };
+    saSaveState(next);
+    saveSurgeArcRemote(next);
+  }
+
   // Per-user persistence for the rebuilt Surge (<SurgeArc/>). Stores the full
   // SaState JSON in surge_arc_state; no-ops when signed out (localStorage only).
   async function loadSurgeArcRemote(lang: string): Promise<SaState | null> {
@@ -7207,6 +7353,327 @@ export default function Home() {
     return sortedVocab.filter((entry) => entry.starred);
   }, [sortedVocab, showStarredOnly]);
 
+  const settingsView = (
+    <section className="app-settings-shell">
+      <div className="app-settings-hero">
+        <div>
+          <div className="app-settings-kicker">Settings</div>
+          <h2>Tune your learning app</h2>
+          <p>Language, goals, appearance, and account controls in one place.</p>
+        </div>
+        <div className="app-settings-status">
+          <strong>{language || "No language"}</strong>
+          <span>{journeyCompletedCount}/{JOURNEY_TOTAL_PARTS} Journey parts complete</span>
+        </div>
+      </div>
+
+      <div className="app-settings-grid">
+        <section className="app-settings-card">
+          <div className="app-settings-card-head">
+            <span>Language</span>
+            <small>What you are learning now</small>
+          </div>
+          <select
+            className="control-select"
+            value={language || ""}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (value === "__add__") {
+                setAddLanguageOpen(true);
+                return;
+              }
+              setAddLanguageOpen(false);
+              if (value) void saveLanguagePreference(value);
+            }}
+          >
+            {languageOptions.length === 0 ? <option value="">Select language</option> : null}
+            {languageOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+            <option value="__add__">+ Add new language</option>
+          </select>
+          {addLanguageOpen ? (
+            <div className="language-add">
+              <input
+                type="text"
+                className="language-input"
+                value={newLanguageInput}
+                onChange={(event) => setNewLanguageInput(event.target.value)}
+                placeholder="Add language"
+              />
+              <button type="button" className="language-save-btn" onClick={() => void saveLanguagePreference(newLanguageInput)}>
+                Save
+              </button>
+            </div>
+          ) : null}
+        </section>
+
+        <section className="app-settings-card">
+          <div className="app-settings-card-head">
+            <span>Daily goal</span>
+            <small>Surge XP target per day</small>
+          </div>
+          <div className="app-goal-control">
+            <button type="button" className="ghost" onClick={() => updateSurgeDailyGoal(surgeDailyGoal - 5)} disabled={!language}>
+              −
+            </button>
+            <label>
+              <strong>{surgeDailyGoal}</strong>
+              <span>XP / day</span>
+              <input
+                type="range"
+                min="10"
+                max="120"
+                step="5"
+                value={surgeDailyGoal}
+                disabled={!language}
+                onChange={(event) => updateSurgeDailyGoal(Number(event.target.value))}
+              />
+            </label>
+            <button type="button" className="ghost" onClick={() => updateSurgeDailyGoal(surgeDailyGoal + 5)} disabled={!language}>
+              +
+            </button>
+          </div>
+          <div className="app-settings-note">This saves to your active Surge deck and syncs to Supabase when signed in.</div>
+        </section>
+
+        <section className="app-settings-card">
+          <div className="app-settings-card-head">
+            <span>Theme</span>
+            <small>Base app appearance</small>
+          </div>
+          <div className="difficulty-controls theme-toggle">
+            {(["dark", "light"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                className={`difficulty-btn ${theme === mode ? "active" : ""}`}
+                onClick={() => setTheme(mode)}
+              >
+                {mode[0].toUpperCase() + mode.slice(1)}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="app-settings-card">
+          <div className="app-settings-card-head">
+            <span>Accent</span>
+            <small>Highlight color</small>
+          </div>
+          <div className="difficulty-controls">
+            {(["blue", "gold", "rose"] as const).map((tone) => (
+              <button
+                key={tone}
+                type="button"
+                className={`difficulty-btn app-accent-btn ${accentTone === tone ? "active" : ""}`}
+                data-tone={tone}
+                onClick={() => setAccentTone(tone)}
+              >
+                {tone[0].toUpperCase() + tone.slice(1)}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="app-settings-card">
+          <div className="app-settings-card-head">
+            <span>Layout density</span>
+            <small>More air or more content</small>
+          </div>
+          <div className="difficulty-controls theme-toggle">
+            {(["comfortable", "compact"] as const).map((density) => (
+              <button
+                key={density}
+                type="button"
+                className={`difficulty-btn ${uiDensity === density ? "active" : ""}`}
+                onClick={() => setUiDensity(density)}
+              >
+                {density === "comfortable" ? "Comfort" : "Compact"}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="app-settings-card">
+          <div className="app-settings-card-head">
+            <span>Legacy drill difficulty</span>
+            <small>Used by older vocab generators</small>
+          </div>
+          <div className="difficulty-controls">
+            {(["easy", "medium", "hard"] as const).map((level) => (
+              <button
+                key={level}
+                type="button"
+                className={`difficulty-btn ${difficulty === level ? "active" : ""}`}
+                onClick={() => setDifficulty(level)}
+              >
+                {level[0].toUpperCase() + level.slice(1)}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="app-settings-card app-settings-card-wide">
+          <div className="app-settings-card-head">
+            <span>Account</span>
+            <small>Signed in as {profileName || username || authUser?.email || "local user"}</small>
+          </div>
+          <div className="app-account-row">
+            <div>
+              <strong>{totalPoints()} points</strong>
+              <span>{loadingProgress ? "Syncing progress" : "Progress is saved locally and remotely when available."}</span>
+            </div>
+            <button type="button" className="signout-btn" onClick={handleLogout}>
+              Sign out
+            </button>
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+
+  const journeyStartChapter =
+    JOURNEY_CHAPTERS.find((chapter) => chapter.id === journeyRecommendation.chapterId) ||
+    selectedJourneyChapter ||
+    JOURNEY_CHAPTERS[0] ||
+    null;
+  const journeyStartPart =
+    journeyStartChapter
+      ? journeyStartChapter.parts.find((part) => part.id === journeyRecommendation.partId) ||
+        journeyStartChapter.parts.find((part) => part.id === selectedJourneySuggestedPart?.id) ||
+        journeyStartChapter.parts[0] ||
+        null
+      : null;
+  const journeyStartRecord =
+    journeyStartChapter && journeyStartPart
+      ? journeyProgress[getJourneyPartKey(journeyStartChapter.id, journeyStartPart.id)] || null
+      : null;
+  const journeyStartButtonLabel =
+    journeyStartRecord?.status === "completed"
+      ? "Replay next part"
+      : journeyStartRecord?.status === "started"
+        ? "Continue next part"
+        : "Start next part";
+  const journeyActiveChapter = selectedJourneyChapter || journeyStartChapter;
+
+  const journeyIdleView = (
+    <div className="journey-v2">
+      {journeyLoading ? (
+        <div className="journey-path-overlay">
+          <BusyLabel label="Preparing your part" />
+          <span>Building the next practice flow...</span>
+        </div>
+      ) : journeyError ? (
+        <div className="journey-path-overlay error">
+          <strong>Journey could not open that part.</strong>
+          <span>{journeyError}</span>
+        </div>
+      ) : null}
+
+      <section className="journey-v2-next">
+        <div className="journey-v2-next-copy">
+          <span className="journey-panel-kicker">Up next</span>
+          <h3>{journeyStartPart ? journeyStartPart.title : "Choose a part"}</h3>
+          <p>{journeyStartPart?.summary || "Journey will open the next useful lesson directly."}</p>
+          {journeyStartPart ? (
+            <div className="journey-mode-row">
+              <span className="journey-mode-chip">{journeyStartPart.focus}</span>
+              <span className="journey-mode-chip">{journeyStartRecord?.completedSteps.length || 0}/5 steps</span>
+            </div>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className="solid journey-v2-start"
+          onClick={() =>
+            journeyStartChapter && journeyStartPart
+              ? void openJourneyPart(journeyStartChapter.id, journeyStartPart.id)
+              : undefined
+          }
+          disabled={!language || journeyLoading || !journeyStartChapter || !journeyStartPart}
+        >
+          {journeyStartButtonLabel}
+        </button>
+      </section>
+
+      <section className="journey-v2-progress">
+        <div>
+          <span className="journey-panel-kicker">Progress</span>
+          <strong>{journeyCompletedCount}/{JOURNEY_TOTAL_PARTS} parts complete</strong>
+        </div>
+        <div className="journey-v2-track" aria-hidden="true">
+          <span style={{ width: `${JOURNEY_TOTAL_PARTS ? (journeyCompletedCount / JOURNEY_TOTAL_PARTS) * 100 : 0}%` }} />
+        </div>
+      </section>
+
+      <div className="journey-v2-chapters" aria-label="Journey chapters">
+        {JOURNEY_CHAPTERS.map((chapter) => {
+          const counts = journeyChapterCounts[chapter.id] || {
+            completed: 0,
+            started: 0,
+            total: chapter.parts.length,
+          };
+          const active = journeyActiveChapter?.id === chapter.id;
+          return (
+            <button
+              key={chapter.id}
+              type="button"
+              className={`journey-v2-chapter${active ? " active" : ""}${counts.completed === counts.total ? " complete" : ""}`}
+              onClick={() => selectJourneyChapter(chapter.id)}
+              aria-pressed={active}
+            >
+              <span>{chapter.index}</span>
+              <strong>{chapter.title}</strong>
+              <em>{counts.completed}/{counts.total}</em>
+            </button>
+          );
+        })}
+      </div>
+
+      {journeyActiveChapter ? (
+        <section className="journey-v2-list">
+          <div className="journey-v2-list-head">
+            <div>
+              <span className="journey-panel-kicker">Chapter {journeyActiveChapter.index}</span>
+              <h3>{journeyActiveChapter.title}</h3>
+            </div>
+            <p>{journeyActiveChapter.summary}</p>
+          </div>
+          <div className="journey-v2-parts">
+            {journeyActiveChapter.parts.map((part) => {
+              const partKey = getJourneyPartKey(journeyActiveChapter.id, part.id);
+              const record = journeyProgress[partKey];
+              const completedSteps = record?.completedSteps.length || 0;
+              const status = record?.status === "completed" ? "Done" : record?.status === "started" ? "Continue" : "Start";
+              return (
+                <button
+                  key={part.id}
+                  type="button"
+                  className={`journey-v2-part${record?.status === "completed" ? " complete" : ""}${record?.status === "started" ? " started" : ""}`}
+                  onClick={() => void openJourneyPart(journeyActiveChapter.id, part.id)}
+                  disabled={!language || journeyLoading}
+                >
+                  <span className="journey-v2-part-index">{part.index}</span>
+                  <span className="journey-v2-part-copy">
+                    <strong>{part.title}</strong>
+                    <span>{part.summary}</span>
+                  </span>
+                  <span className="journey-v2-part-meta">
+                    <em>{completedSteps}/5</em>
+                    <strong>{status}</strong>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+
   const journeyView = (
     <section className="journey-shell">
       <div className="journey-header">
@@ -7289,7 +7756,7 @@ export default function Home() {
           </section>
         </section>
       ) : (
-        <div className="journey-layout">
+        journeyIdleView || <div className="journey-layout">
           {journeyLoading ? (
             <div className="journey-path-overlay">
               <BusyLabel label="Preparing your part" />
@@ -7941,12 +8408,6 @@ export default function Home() {
 
   const surgeView = (
     <section className="surge-shell">
-      <div className="subtle-back">
-        <button type="button" className="ghost subtle-back-btn" onClick={() => setView("dashboard")}>
-          Back
-        </button>
-      </div>
-
       <div className="surge-header">
         <div>
           <div className="surge-kicker">Surge</div>
@@ -8474,17 +8935,20 @@ export default function Home() {
                         <div
                           className={`vocab-card ${flipped ? "flipped" : ""}`}
                           role="button"
-                    tabIndex={0}
-                    onClick={() => toggleStudyCard(index)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        toggleStudyCard(index);
-                      }
-                    }}
-                    aria-pressed={flipped ? "true" : "false"}
+                          tabIndex={0}
+                          onClick={(event) => {
+                            if (isNestedCardControl(event.target)) return;
+                            toggleStudyCard(index);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              toggleStudyCard(index);
+                            }
+                          }}
+                          aria-pressed={flipped ? "true" : "false"}
                         >
-                          <div className="vocab-card-actions">
+                          <div className="vocab-card-actions" onPointerDown={stopNestedCardControl} onClick={stopNestedCardControl}>
                             <button
                               type="button"
                               className={`vocab-card-icon ${entry.starred ? "active" : ""}`}
@@ -8751,7 +9215,10 @@ export default function Home() {
                   className={`vocab-card ${flipped ? "flipped" : ""}`}
                   role="button"
                   tabIndex={0}
-                  onClick={() => toggleSentenceCard(index)}
+                  onClick={(event) => {
+                    if (isNestedCardControl(event.target)) return;
+                    toggleSentenceCard(index);
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
@@ -8760,7 +9227,7 @@ export default function Home() {
                   }}
                   aria-pressed={flipped ? "true" : "false"}
                 >
-                  <div className="vocab-card-actions">
+                  <div className="vocab-card-actions" onPointerDown={stopNestedCardControl} onClick={stopNestedCardControl}>
                     <button
                       type="button"
                       className={`vocab-card-icon ${entry.starred ? "active" : ""}`}
@@ -9031,7 +9498,10 @@ export default function Home() {
                     className={`vocab-card ${flipped ? "flipped" : ""}`}
                     role="button"
                     tabIndex={0}
-                    onClick={() => toggleScenarioCard(index)}
+                    onClick={(event) => {
+                      if (isNestedCardControl(event.target)) return;
+                      toggleScenarioCard(index);
+                    }}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
@@ -9040,7 +9510,7 @@ export default function Home() {
                     }}
                     aria-pressed={flipped ? "true" : "false"}
                   >
-                    <div className="vocab-card-actions">
+                    <div className="vocab-card-actions" onPointerDown={stopNestedCardControl} onClick={stopNestedCardControl}>
                       <button
                         type="button"
                         className={`vocab-card-icon ${entry.starred ? "active" : ""}`}
@@ -9290,20 +9760,23 @@ export default function Home() {
               const holdId = `topic-${activeTopic}-${index}`;
               return (
                 <div key={`${entry.word}-${index}`} className="vocab-card-wrap">
-                  <div
-                    className={`vocab-card ${flipped ? "flipped" : ""}`}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => toggleTopicCard(index)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
+                    <div
+                      className={`vocab-card ${flipped ? "flipped" : ""}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={(event) => {
+                        if (isNestedCardControl(event.target)) return;
                         toggleTopicCard(index);
-                      }
-                    }}
-                    aria-pressed={flipped ? "true" : "false"}
-                  >
-                    <div className="vocab-card-actions">
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          toggleTopicCard(index);
+                        }
+                      }}
+                      aria-pressed={flipped ? "true" : "false"}
+                    >
+                      <div className="vocab-card-actions" onPointerDown={stopNestedCardControl} onClick={stopNestedCardControl}>
                       <button
                         type="button"
                         className={`vocab-card-icon ${entry.starred ? "active" : ""}`}
@@ -10023,7 +10496,7 @@ export default function Home() {
       <header className={`top-bar${authUser ? " authenticated-header" : ""}`}>
         <div className="top-bar-main">
           <div className="brand">
-            <button type="button" className="brand-button" onClick={() => setView("dashboard")}>
+            <button type="button" className="brand-button" onClick={() => setView("surge")}>
               <span className="brand-name">NeoLingo</span>
               <span className="brand-tag">Calm practice. Fast progress.</span>
             </button>
@@ -10033,10 +10506,10 @@ export default function Home() {
             <nav className="header-nav" aria-label="Primary">
               <button
                 type="button"
-                className={`header-nav-btn ${view === "journey" ? "" : "active"}`}
-                onClick={() => setView("dashboard")}
+                className={`header-nav-btn ${view === "surge" ? "active" : ""}`}
+                onClick={() => setView("surge")}
               >
-                Home
+                Surge
               </button>
               <button
                 type="button"
@@ -10044,6 +10517,13 @@ export default function Home() {
                 onClick={() => setView("journey")}
               >
                 Journey
+              </button>
+              <button
+                type="button"
+                className={`header-nav-btn ${view === "settings" ? "active" : ""}`}
+                onClick={() => setView("settings")}
+              >
+                Settings
               </button>
             </nav>
           ) : null}
@@ -10327,6 +10807,8 @@ export default function Home() {
           </section>
         ) : view === "journey" ? (
           journeyView
+        ) : view === "settings" ? (
+          settingsView
         ) : view === "common" ? (
           commonWordsView
         ) : view === "sentences" ? (
@@ -10353,17 +10835,14 @@ export default function Home() {
         )}
       </main>
 
+      {aiPendingCount > 0 ? (
+        <div className="app-ai-indicator" role="status" aria-live="polite">
+          <BusyLabel label={aiPendingLabel} />
+        </div>
+      ) : null}
+
       {authUser ? (
         <nav className="mobile-app-nav" aria-label="App navigation">
-          <button
-            type="button"
-            className={view === "dashboard" ? "active" : ""}
-            aria-current={view === "dashboard" ? "page" : undefined}
-            onClick={() => setView("dashboard")}
-          >
-            <span className="mobile-app-nav-icon" aria-hidden="true">⌂</span>
-            <span>Home</span>
-          </button>
           <button
             type="button"
             className={view === "surge" ? "active" : ""}
@@ -10384,13 +10863,12 @@ export default function Home() {
           </button>
           <button
             type="button"
-            className={mobileMenuOpen ? "active" : ""}
-            aria-expanded={mobileMenuOpen}
-            aria-controls="mobile-app-menu"
-            onClick={() => setMobileMenuOpen(true)}
+            className={view === "settings" ? "active" : ""}
+            aria-current={view === "settings" ? "page" : undefined}
+            onClick={() => setView("settings")}
           >
-            <span className="mobile-app-nav-icon" aria-hidden="true">•••</span>
-            <span>More</span>
+            <span className="mobile-app-nav-icon" aria-hidden="true">⚙</span>
+            <span>Settings</span>
           </button>
         </nav>
       ) : null}
@@ -10795,7 +11273,10 @@ export default function Home() {
                             className={`vocab-card ${flipped ? "flipped" : ""}`}
                             role="button"
                             tabIndex={0}
-                            onClick={() => toggleCard(entry.key)}
+                            onClick={(event) => {
+                              if (isNestedCardControl(event.target)) return;
+                              toggleCard(entry.key);
+                            }}
                             onKeyDown={(event) => {
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
@@ -10804,7 +11285,7 @@ export default function Home() {
                             }}
                             aria-pressed={flipped ? "true" : "false"}
                           >
-                            <div className="vocab-card-actions">
+                            <div className="vocab-card-actions" onPointerDown={stopNestedCardControl} onClick={stopNestedCardControl}>
                               <button
                                 type="button"
                                 className={`vocab-card-icon ${entry.starred ? "active" : ""}`}

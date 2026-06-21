@@ -509,14 +509,16 @@ export function saPlanSession(state: SaState, at = Date.now()): SaSessionPlan {
     state.profile.sessionsPlayed >= 3 && (state.completedLessons || []).length < lessonTarget
       ? lessonSequence.find((id) => !(state.completedLessons || []).includes(id)) || null
       : null;
+  const practiceDetail = pieces.length ? pieces.join(" · ") : "Recall, production, and a short scenario";
+  const lessonOnly = Boolean(recommendedLessonId && !cards.length);
 
   return {
-    title: recommendedLessonId ? "Continue with a lesson" : "Adaptive practice",
-    detail: recommendedLessonId
-      ? "A short grammar step is the best next move, then practice will use it."
-      : pieces.length
-        ? pieces.join(" · ")
-        : "Recall, production, and a short scenario",
+    title: lessonOnly ? "Continue with a lesson" : "Adaptive practice",
+    detail: lessonOnly
+      ? "Opening the next grammar step."
+      : recommendedLessonId
+        ? `${practiceDetail} · lesson queued`
+        : practiceDetail,
     focus: context.focus,
     cards,
     recommendedLessonId,

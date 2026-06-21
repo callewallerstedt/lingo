@@ -227,6 +227,83 @@ const GERMAN: RawItem[] = [
   ]),
 ];
 
+const SWEDISH: RawItem[] = [
+  ...grp("Greetings & Politeness", [
+    { t: "hej", e: "hi / hello", note: "Works in almost every everyday situation." },
+    { t: "tack", e: "thank you", note: "Reply with varsågod." },
+    { t: "varsågod", e: "you're welcome / here you go", type: "phrase" },
+    { t: "snälla", e: "please", note: "Often Swedish uses tone/word order instead of a separate please." },
+    { t: "förlåt", e: "sorry" },
+    { t: "ursäkta", e: "excuse me" },
+    { t: "god morgon", e: "good morning", type: "phrase" },
+    { t: "hej då", e: "goodbye", type: "phrase" },
+  ]),
+  ...grp("Core Words", [
+    { t: "ja", e: "yes" },
+    { t: "nej", e: "no" },
+    { t: "idag", e: "today" },
+    { t: "imorgon", e: "tomorrow" },
+    { t: "igår", e: "yesterday" },
+    { t: "nu", e: "now" },
+    { t: "mycket", e: "very / much" },
+    { t: "bra", e: "good / well", note: "Same form is used for good and well in many simple phrases." },
+    { t: "stor", e: "big", note: "Common forms: stor, stort, stora." },
+    { t: "liten", e: "small", note: "Common forms: liten, litet, lilla/små." },
+  ]),
+  ...grp("Food & Drink", [
+    { t: "vatten", e: "water", note: "Neuter: ett vatten in countable uses; usually just vatten." },
+    { t: "kaffe", e: "coffee", note: "Neuter: ett kaffe when ordering one coffee." },
+    { t: "bröd", e: "bread" },
+    { t: "mjölk", e: "milk" },
+    { t: "öl", e: "beer", note: "En öl = a beer." },
+    { t: "mat", e: "food" },
+    { t: "ost", e: "cheese" },
+    { t: "kanelbulle", e: "cinnamon bun", level: 2 },
+  ]),
+  ...grp("People & Places", [
+    { t: "hem", e: "home", note: "hem = homeward/home as direction; hemma = at home." },
+    { t: "hemma", e: "at home", type: "phrase" },
+    { t: "vän", e: "friend" },
+    { t: "familj", e: "family" },
+    { t: "jobb", e: "work / job" },
+    { t: "stad", e: "city" },
+    { t: "pengar", e: "money", note: "Usually plural in Swedish." },
+    { t: "tid", e: "time" },
+  ]),
+  ...grp("Key Verbs", [
+    { t: "vara", e: "to be", note: "Present: är." },
+    { t: "ha", e: "to have", note: "Present: har." },
+    { t: "göra", e: "to do / to make", note: "Present: gör." },
+    { t: "gå", e: "to go / walk", note: "Present: går." },
+    { t: "vilja", e: "to want", note: "Present: vill." },
+    { t: "kunna", e: "to be able / can", note: "Present: kan." },
+    { t: "äta", e: "to eat" },
+    { t: "dricka", e: "to drink" },
+    { t: "förstå", e: "to understand" },
+    { t: "prata", e: "to speak / talk" },
+  ]),
+  ...grp("Everyday Phrases", [
+    { t: "hur mår du?", e: "how are you?", type: "phrase" },
+    { t: "jag mår bra", e: "I'm fine", type: "phrase" },
+    { t: "det är bra", e: "that's good / it is good", type: "phrase" },
+    { t: "jag vet inte", e: "I don't know", type: "phrase" },
+    { t: "vi ses senare", e: "see you later", type: "phrase" },
+    { t: "vad betyder det?", e: "what does that mean?", type: "phrase" },
+  ]),
+  ...grp("Sentences", [
+    { t: "Jag heter Anna.", e: "My name is Anna.", type: "sentence", note: "Literally: I am called Anna." },
+    { t: "Jag förstår inte.", e: "I don't understand.", type: "sentence" },
+    { t: "Kan du upprepa?", e: "Can you repeat?", type: "sentence" },
+    { t: "Vad kostar det?", e: "How much does it cost?", type: "sentence" },
+    { t: "Jag vill ha en kaffe, tack.", e: "I would like a coffee, thanks.", type: "sentence", note: "A natural simple ordering phrase." },
+    { t: "Var ligger toaletten?", e: "Where is the bathroom?", type: "sentence" },
+    { t: "Pratar du engelska?", e: "Do you speak English?", type: "sentence" },
+    { t: "Jag kommer från Stockholm.", e: "I'm from Stockholm.", type: "sentence" },
+    { t: "Vad vill du göra idag?", e: "What do you want to do today?", type: "sentence", level: 2 },
+    { t: "Jag tycker mycket om den här staden.", e: "I really like this city.", type: "sentence", level: 2 },
+  ]),
+];
+
 const GENERIC: RawItem[] = grp("Core Words", [
   { t: "hello", e: "a greeting" },
   { t: "thank you", e: "expression of gratitude", type: "phrase" },
@@ -253,6 +330,8 @@ const DECKS: Record<string, RawItem[]> = {
   francais: FRENCH,
   german: GERMAN,
   deutsch: GERMAN,
+  swedish: SWEDISH,
+  svenska: SWEDISH,
 };
 
 export function saStarterDeck(language: string): SaWord[] {

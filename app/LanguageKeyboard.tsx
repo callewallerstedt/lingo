@@ -6,6 +6,7 @@ type LanguageKeyboardProps = {
   language: string;
   value: string;
   answer: string;
+  guideKeys?: boolean;
   disabled?: boolean;
   onChange: (value: string) => void;
   onSubmit: () => void;
@@ -45,6 +46,7 @@ export default function LanguageKeyboard({
   language,
   value,
   answer,
+  guideKeys = true,
   disabled = false,
   onChange,
   onSubmit,
@@ -63,7 +65,7 @@ export default function LanguageKeyboard({
       {rows.map((row, rowIndex) => (
         <div className="nx-keyboard-row" key={`${row.join("")}-${rowIndex}`}>
           {row.map((key) => {
-            const muted = remaining.length > 0 && !needed.has(key);
+            const muted = guideKeys && remaining.length > 0 && !needed.has(key);
             return (
               <button
                 type="button"
@@ -82,8 +84,8 @@ export default function LanguageKeyboard({
       <div className="nx-keyboard-row nx-keyboard-actions">
         <button
           type="button"
-          className={`nx-key space ${remaining.includes(" ") ? "needed" : "muted"}`}
-          disabled={disabled || (remaining.length > 0 && !remaining.includes(" "))}
+          className={`nx-key space ${guideKeys && remaining.length > 0 && !remaining.includes(" ") ? "muted" : "needed"}`}
+          disabled={disabled || (guideKeys && remaining.length > 0 && !remaining.includes(" "))}
           onClick={() => onChange(`${value} `)}
         >
           space
