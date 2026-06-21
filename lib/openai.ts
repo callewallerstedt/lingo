@@ -5,7 +5,7 @@ export const TRANSLATION_MODEL = process.env.OPENAI_TRANSLATION_MODEL || OPENAI_
 export const TTS_MODEL = process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts";
 export const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe";
 
-type OpenAIMessages = Array<{ role: string; content: Array<{ type: "text"; text: string }> }>;
+type OpenAIMessages = Array<{ role: string; content: Array<{ type: string; text: string }> }>;
 
 type OpenAIRequestOptions = {
   model?: string;
@@ -69,7 +69,7 @@ export async function callOpenAI(messages: OpenAIMessages, options: OpenAIReques
   return output.trim();
 }
 
-export async function callOpenAIForTranslation(messages: Array<{ role: string; content: Array<{ type: "text"; text: string }> }>) {
+export async function callOpenAIForTranslation(messages: OpenAIMessages) {
   return callOpenAI(messages, {
     model: TRANSLATION_MODEL,
     reasoningEffort: "none",

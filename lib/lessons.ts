@@ -87,10 +87,10 @@ export const LESSON_TOPICS: LessonTopic[] = [
   {
     id: "pronouns",
     title: "Subject pronouns",
-    subtitle: "I, you, he, she, we…",
+    subtitle: "I, every you, he, she, it, we, they",
     category: "Foundations",
     brief:
-      "Teach subject pronouns in the target language for all persons, the formal vs informal 'you' distinction, and when pronouns are normally dropped (if the language is pro-drop). Show each pronoun with a simple example sentence.",
+      "Teach the complete subject-pronoun system in the target language: I; informal and formal singular you; he; she; it or the language's actual equivalent/no-distinct-form explanation; we; informal and formal/plural you; and they, including masculine, feminine, neuter, common-gender, and mixed-group distinctions where the language marks them. Explain when pronouns are normally dropped (if the language is pro-drop). Show every pronoun/person with a simple example sentence.",
   },
   {
     id: "numbers",

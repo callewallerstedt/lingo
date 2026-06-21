@@ -224,6 +224,15 @@ type JourneyPersistedRow = {
   updated_at?: string | null;
 };
 
+function BusyLabel({ label }: { label: string }) {
+  return (
+    <span className="app-busy-label" role="status" aria-live="polite">
+      <span className="app-spinner" aria-hidden="true" />
+      <span>{label}</span>
+    </span>
+  );
+}
+
 export default function Home() {
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
@@ -238,7 +247,6 @@ export default function Home() {
   const [theme, setTheme] = useState<ThemeMode>("dark");
   const [isCompactViewport, setIsCompactViewport] = useState<boolean>(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
-  const [mobileHeaderHidden, setMobileHeaderHidden] = useState<boolean>(false);
   const [mobileVocabTools, setMobileVocabTools] = useState<{
     common: boolean;
     sentence: boolean;
@@ -526,10 +534,6 @@ export default function Home() {
     const syncViewport = () => {
       const compact = mediaQuery.matches;
       setIsCompactViewport(compact);
-      if (!compact) {
-        setMobileMenuOpen(false);
-        setMobileHeaderHidden(false);
-      }
     };
 
     syncViewport();
@@ -542,30 +546,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!isCompactViewport) return;
-    let lastScrollY = window.scrollY;
-    const onScroll = () => {
-      const currentScrollY = window.scrollY;
-      if (mobileMenuOpen) {
-        setMobileHeaderHidden(false);
-        lastScrollY = currentScrollY;
-        return;
-      }
-      if (currentScrollY <= 24 || currentScrollY < lastScrollY - 8) {
-        setMobileHeaderHidden(false);
-      } else if (currentScrollY > lastScrollY + 8 && currentScrollY > 88) {
-        setMobileHeaderHidden(true);
-      }
-      lastScrollY = currentScrollY;
-    };
-
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [isCompactViewport, mobileMenuOpen]);
-
-  useEffect(() => {
     setMobileMenuOpen(false);
-    setMobileHeaderHidden(false);
     setMobileVocabTools({
       common: false,
       sentence: false,
@@ -7502,7 +7483,9 @@ export default function Home() {
               </div>
               {journeyLoading ? (
                 <div className="journey-empty-state">
-                  <div className="journey-empty-title">Preparing the part...</div>
+                  <div className="journey-empty-title">
+                    <BusyLabel label="Preparing the part" />
+                  </div>
                   <div className="journey-empty-body">Journey is building the lesson flow for this topic.</div>
                 </div>
               ) : journeyError ? (
@@ -8407,7 +8390,7 @@ export default function Home() {
                     onClick={() => generateStudyWords(30)}
                     disabled={!language || studyLoading}
                   >
-                    {studyLoading ? "Generating" : "Generate 30"}
+                    {studyLoading ? <BusyLabel label="Generating" /> : "Generate 30"}
                   </button>
                   <button
                     type="button"
@@ -8415,7 +8398,7 @@ export default function Home() {
                     onClick={() => generateStudyWords(10)}
                     disabled={!language || studyLoading}
                   >
-                    {studyLoading ? "Generating" : "Generate 10 more"}
+                    {studyLoading ? <BusyLabel label="Generating" /> : "Generate 10 more"}
                   </button>
                   <button
                     type="button"
@@ -8423,7 +8406,7 @@ export default function Home() {
                     onClick={() => generateStudyWords(10, "advanced")}
                     disabled={!language || studyLoading}
                   >
-                    {studyLoading ? "Generating" : "Important harder words"}
+                    {studyLoading ? <BusyLabel label="Generating" /> : "Important harder words"}
                   </button>
                 </div>
               </div>
@@ -8688,7 +8671,7 @@ export default function Home() {
                     onClick={() => generateSentenceWords(20)}
                     disabled={!language || sentenceLoading}
                   >
-                    {sentenceLoading ? "Generating" : "Generate 20"}
+                    {sentenceLoading ? <BusyLabel label="Generating" /> : "Generate 20"}
                   </button>
                   <button
                     type="button"
@@ -8696,7 +8679,7 @@ export default function Home() {
                     onClick={() => generateSentenceWords(10)}
                     disabled={!language || sentenceLoading}
                   >
-                    {sentenceLoading ? "Generating" : "Generate 10 more"}
+                    {sentenceLoading ? <BusyLabel label="Generating" /> : "Generate 10 more"}
                   </button>
                   <button
                     type="button"
@@ -8704,7 +8687,7 @@ export default function Home() {
                     onClick={() => generateSentenceWords(10, "advanced")}
                     disabled={!language || sentenceLoading}
                   >
-                    {sentenceLoading ? "Generating" : "More flexible patterns"}
+                    {sentenceLoading ? <BusyLabel label="Generating" /> : "More flexible patterns"}
                   </button>
                 </div>
               </div>
@@ -8963,7 +8946,7 @@ export default function Home() {
               onClick={() => generateScenarioWords(20, activeScenarioVocab)}
               disabled={!language || scenarioVocabLoading}
             >
-              {scenarioVocabLoading ? "Generating" : "Generate 20"}
+              {scenarioVocabLoading ? <BusyLabel label="Generating" /> : "Generate 20"}
             </button>
             <button
               type="button"
@@ -8971,7 +8954,7 @@ export default function Home() {
               onClick={() => generateScenarioWords(10, activeScenarioVocab)}
               disabled={!language || scenarioVocabLoading}
             >
-              {scenarioVocabLoading ? "Generating" : "Generate 10 more"}
+              {scenarioVocabLoading ? <BusyLabel label="Generating" /> : "Generate 10 more"}
             </button>
             <button
               type="button"
@@ -9232,7 +9215,7 @@ export default function Home() {
               onClick={() => generateTopicWords(20, activeTopic)}
               disabled={!language || topicVocabLoading}
             >
-              {topicVocabLoading ? "Generating" : "Generate 20"}
+              {topicVocabLoading ? <BusyLabel label="Generating" /> : "Generate 20"}
             </button>
             <button
               type="button"
@@ -9240,7 +9223,7 @@ export default function Home() {
               onClick={() => generateTopicWords(10, activeTopic)}
               disabled={!language || topicVocabLoading}
             >
-              {topicVocabLoading ? "Generating" : "Generate 10 more"}
+              {topicVocabLoading ? <BusyLabel label="Generating" /> : "Generate 10 more"}
             </button>
             <button
               type="button"
@@ -9819,7 +9802,7 @@ export default function Home() {
               onClick={() => getSuggestion()}
               disabled={suggestionLoading}
             >
-              {suggestionLoading ? "Thinking" : "Hint"}
+              {suggestionLoading ? <BusyLabel label="Thinking" /> : "Hint"}
             </button>
           )}
         </div>
@@ -9852,7 +9835,7 @@ export default function Home() {
       ) : (
         <div className="task-banner">
           <div className="task-label">Current task</div>
-          <div className="task-text">{taskLoading ? "Generating task" : taskText || ""}</div>
+          <div className="task-text">{taskLoading ? <BusyLabel label="Generating task" /> : taskText || ""}</div>
           <div className={`task-status ${taskCompleted ? "done" : taskChecking ? "checking" : ""}`}>
             {taskCompleted ? "Completed" : taskChecking ? "Checking" : "In progress"}
           </div>
@@ -10008,7 +9991,11 @@ export default function Home() {
                 Ask in English for a translation, write in {targetLabel} for a correction, or say <code>say ...</code>.
               </div>
             )}
-            {quickChatLoading ? <div className="quick-chat-loading">Thinking...</div> : null}
+            {quickChatLoading ? (
+              <div className="quick-chat-loading">
+                <BusyLabel label="Thinking" />
+              </div>
+            ) : null}
           </div>
           <div className="quick-chat-composer">
             <textarea
@@ -10064,10 +10051,11 @@ export default function Home() {
   );
 
   return (
-    <div className="app-shell" onPointerDownCapture={handleAppPointerDownCapture}>
-      <header
-        className={`top-bar${isCompactViewport ? " compact-header" : ""}${mobileMenuOpen ? " mobile-menu-open" : ""}${mobileHeaderHidden ? " mobile-hidden" : ""}`}
-      >
+    <div
+      className={`app-shell${authUser ? " authenticated" : ""}`}
+      onPointerDownCapture={handleAppPointerDownCapture}
+    >
+      <header className={`top-bar${authUser ? " authenticated-header" : ""}`}>
         <div className="top-bar-main">
           <div className="brand">
             <button type="button" className="brand-button" onClick={() => setView("dashboard")}>
@@ -10095,23 +10083,6 @@ export default function Home() {
             </nav>
           ) : null}
 
-          {authUser && isCompactViewport ? (
-            <div className="mobile-header-actions">
-              <div className="mobile-header-summary">
-                <span>{language || "Choose language"}</span>
-                <span>{surgeDueCount} due</span>
-              </div>
-              <button
-                type="button"
-                className="ghost mobile-menu-toggle"
-                aria-expanded={mobileMenuOpen}
-                aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
-                onClick={() => setMobileMenuOpen((current) => !current)}
-              >
-                {mobileMenuOpen ? "Close" : "Menu"}
-              </button>
-            </div>
-          ) : null}
         </div>
 
         <div className="header-controls">
@@ -10229,7 +10200,9 @@ export default function Home() {
 
       <main className="main-area">
         {authLoading ? (
-          <div className="loading-panel">Loading</div>
+          <div className="loading-panel">
+            <BusyLabel label="Loading NeoLingo" />
+          </div>
         ) : !authUser ? (
           <div className="lg-auth">
             <style dangerouslySetInnerHTML={{ __html: LOGIN_CSS }} />
@@ -10414,6 +10387,159 @@ export default function Home() {
           chatView
         )}
       </main>
+
+      {authUser ? (
+        <nav className="mobile-app-nav" aria-label="App navigation">
+          <button
+            type="button"
+            className={view === "dashboard" ? "active" : ""}
+            aria-current={view === "dashboard" ? "page" : undefined}
+            onClick={() => setView("dashboard")}
+          >
+            <span className="mobile-app-nav-icon" aria-hidden="true">⌂</span>
+            <span>Home</span>
+          </button>
+          <button
+            type="button"
+            className={view === "surge" ? "active" : ""}
+            aria-current={view === "surge" ? "page" : undefined}
+            onClick={() => setView("surge")}
+          >
+            <span className="mobile-app-nav-icon surge" aria-hidden="true">✦</span>
+            <span>Surge</span>
+          </button>
+          <button
+            type="button"
+            className={view === "journey" ? "active" : ""}
+            aria-current={view === "journey" ? "page" : undefined}
+            onClick={() => setView("journey")}
+          >
+            <span className="mobile-app-nav-icon" aria-hidden="true">◎</span>
+            <span>Journey</span>
+          </button>
+          <button
+            type="button"
+            className={mobileMenuOpen ? "active" : ""}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mobile-app-menu"
+            onClick={() => setMobileMenuOpen(true)}
+          >
+            <span className="mobile-app-nav-icon" aria-hidden="true">•••</span>
+            <span>More</span>
+          </button>
+        </nav>
+      ) : null}
+
+      {authUser && mobileMenuOpen ? (
+        <div
+          id="mobile-app-menu"
+          className="mobile-app-menu-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mobile-app-menu-title"
+        >
+          <section className="mobile-app-menu">
+            <div className="mobile-app-menu-head">
+              <div>
+                <div className="mobile-app-menu-kicker">NeoLingo</div>
+                <h2 id="mobile-app-menu-title">Settings</h2>
+              </div>
+              <button type="button" className="ghost" onClick={() => setMobileMenuOpen(false)}>
+                Done
+              </button>
+            </div>
+
+            <div className="mobile-app-menu-section">
+              <label className="control-label">Language</label>
+              <select
+                className="control-select"
+                value={language || ""}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === "__add__") {
+                    setAddLanguageOpen(true);
+                    return;
+                  }
+                  setAddLanguageOpen(false);
+                  if (value) void saveLanguagePreference(value);
+                }}
+              >
+                {languageOptions.length === 0 ? <option value="">Select language</option> : null}
+                {languageOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+                <option value="__add__">+ Add new language</option>
+              </select>
+              {addLanguageOpen ? (
+                <div className="language-add">
+                  <input
+                    type="text"
+                    className="language-input"
+                    value={newLanguageInput}
+                    onChange={(event) => setNewLanguageInput(event.target.value)}
+                    placeholder="Add language"
+                  />
+                  <button
+                    type="button"
+                    className="language-save-btn"
+                    onClick={() => void saveLanguagePreference(newLanguageInput)}
+                  >
+                    Save
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="mobile-app-menu-section">
+              <label className="control-label">Difficulty</label>
+              <div className="difficulty-controls">
+                {(["easy", "medium", "hard"] as const).map((level) => (
+                  <button
+                    key={level}
+                    type="button"
+                    className={`difficulty-btn ${difficulty === level ? "active" : ""}`}
+                    onClick={() => setDifficulty(level)}
+                  >
+                    {level[0].toUpperCase() + level.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mobile-app-menu-section">
+              <label className="control-label">Theme</label>
+              <div className="difficulty-controls theme-toggle">
+                <button
+                  type="button"
+                  className={`difficulty-btn ${theme === "dark" ? "active" : ""}`}
+                  onClick={() => setTheme("dark")}
+                >
+                  Dark
+                </button>
+                <button
+                  type="button"
+                  className={`difficulty-btn ${theme === "light" ? "active" : ""}`}
+                  onClick={() => setTheme("light")}
+                >
+                  Light
+                </button>
+              </div>
+            </div>
+
+            <div className="mobile-app-menu-profile">
+              <div>
+                <strong>{profileName || username || authUser.email}</strong>
+                <span>{totalPoints()} points</span>
+              </div>
+              <button type="button" className="signout-btn" onClick={handleLogout}>
+                Sign out
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {showSuggestionModal && suggestion ? (
         <div className="suggestion-modal-overlay" onClick={() => setShowSuggestionModal(false)}>
@@ -10607,7 +10733,9 @@ export default function Home() {
                   })}
                 </div>
               ) : (
-                <div className="vocab-examples">Generating examples...</div>
+                <div className="vocab-examples">
+                  <BusyLabel label="Generating examples" />
+                </div>
               )}
             </div>
           </div>
@@ -10815,7 +10943,7 @@ export default function Home() {
         </div>
       ) : null}
 
-      {authUser ? quickChatWidget : null}
+      {authUser && !isCompactViewport ? quickChatWidget : null}
 
     </div>
   );

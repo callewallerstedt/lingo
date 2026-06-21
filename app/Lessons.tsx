@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -47,15 +47,26 @@ export default function LessonsPanel({ language, onClose, loadRemote, saveRemote
   const [openId, setOpenId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [errorId, setErrorId] = useState<string | null>(null);
+  const loadRemoteRef = useRef(loadRemote);
+  const saveRemoteRef = useRef(saveRemote);
+
+  useEffect(() => {
+    loadRemoteRef.current = loadRemote;
+  }, [loadRemote]);
+
+  useEffect(() => {
+    saveRemoteRef.current = saveRemote;
+  }, [saveRemote]);
 
   useEffect(() => {
     setLessons(loadLocal(language));
     setOpenId(null);
     let cancelled = false;
     (async () => {
-      if (!loadRemote) return;
+      const load = loadRemoteRef.current;
+      if (!load) return;
       try {
-        const remote = await loadRemote(language);
+        const remote = await load(language);
         if (cancelled || !remote) return;
         setLessons((prev) => {
           const merged = { ...prev };
@@ -72,7 +83,7 @@ export default function LessonsPanel({ language, onClose, loadRemote, saveRemote
     return () => {
       cancelled = true;
     };
-  }, [language, loadRemote]);
+  }, [language]);
 
   const generate = async (topic: LessonTopic) => {
     if (busyId) return;
@@ -93,7 +104,7 @@ export default function LessonsPanel({ language, onClose, loadRemote, saveRemote
         saveLocal(language, next);
         return next;
       });
-      saveRemote?.(language, content);
+      saveRemoteRef.current?.(language, content);
       setOpenId(topic.id);
     } catch {
       setErrorId(topic.id);
@@ -121,7 +132,14 @@ export default function LessonsPanel({ language, onClose, loadRemote, saveRemote
                 ‹ Lessons
               </button>
               <button type="button" className="lx-regen" onClick={() => generate(openTopic)} disabled={busyId !== null}>
-                {busyId === openTopic.id ? "Regenerating…" : "Regenerate"}
+                {busyId === openTopic.id ? (
+                  <span className="lx-busy-label">
+                    <span className="lx-spin dark" aria-hidden="true" />
+                    Regenerating
+                  </span>
+                ) : (
+                  "Regenerate"
+                )}
               </button>
             </div>
             <div className="lx-md">
@@ -148,7 +166,12 @@ export default function LessonsPanel({ language, onClose, loadRemote, saveRemote
                     const busy = busyId === t.id;
                     return (
                       <div key={t.id} className={`lx-item ${has ? "done" : ""}`}>
-                        <div className="lx-item-main" onClick={() => (has ? setOpenId(t.id) : generate(t))}>
+                        <button
+                          type="button"
+                          className="lx-item-main"
+                          onClick={() => (has ? setOpenId(t.id) : generate(t))}
+                          disabled={busyId !== null && !busy}
+                        >
                           <div className="lx-item-text">
                             <span className="lx-item-title">
                               {t.title}
@@ -156,14 +179,21 @@ export default function LessonsPanel({ language, onClose, loadRemote, saveRemote
                             </span>
                             <span className="lx-item-sub">{errorId === t.id ? "Couldn’t generate — needs an OpenAI key / connection." : t.subtitle}</span>
                           </div>
-                        </div>
+                        </button>
                         {has ? (
                           <button type="button" className="lx-view" onClick={() => setOpenId(t.id)}>
                             Open
                           </button>
                         ) : (
                           <button type="button" className="lx-gen" onClick={() => generate(t)} disabled={busy || busyId !== null}>
-                            {busy ? <span className="lx-spin" /> : "Generate"}
+                            {busy ? (
+                              <span className="lx-busy-label">
+                                <span className="lx-spin" aria-hidden="true" />
+                                Generating
+                              </span>
+                            ) : (
+                              "Generate"
+                            )}
                           </button>
                         )}
                       </div>
@@ -184,11 +214,11 @@ function LessonStyles() {
 }
 
 const LX_CSS = `
-.lx-overlay{position:fixed;inset:0;background:rgba(11,14,23,.42);display:grid;place-items:start center;z-index:240;padding:14px;backdrop-filter:blur(3px);overflow:auto;animation:nx-in .2s;}
-.lx-modal{background:var(--nx-surface,#fff);border:1px solid var(--nx-line,#eceef4);border-radius:22px;padding:18px;max-width:680px;width:100%;margin:14px auto;box-shadow:var(--nx-shadow,0 16px 36px -22px rgba(30,40,90,.28));}
-.lx-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px;}
+.lx-overlay{position:fixed;inset:0;background:rgba(11,14,23,.42);display:grid;place-items:start center;z-index:240;padding:max(14px,env(safe-area-inset-top)) 14px max(14px,env(safe-area-inset-bottom));backdrop-filter:blur(3px);overflow:auto;overscroll-behavior:contain;animation:nx-in .2s;}
+.lx-modal{background:var(--nx-surface,#fff);border:1px solid var(--nx-line,#eceef4);border-radius:22px;padding:18px;max-width:680px;width:100%;max-height:calc(100dvh - max(28px,env(safe-area-inset-top)) - max(28px,env(safe-area-inset-bottom)));margin:0 auto;box-shadow:var(--nx-shadow,0 16px 36px -22px rgba(30,40,90,.28));overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
+.lx-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px;position:sticky;top:-18px;z-index:3;background:var(--nx-surface,#fff);padding:18px 0 10px;}
 .lx-title{font-weight:800;font-size:18px;}
-.lx-close,.lx-back,.lx-regen{background:var(--nx-surface2,#f5f7fb);border:1px solid var(--nx-line,#eceef4);color:var(--nx-ink,#0b0e17);border-radius:11px;padding:9px 14px;font-weight:600;font-size:14px;cursor:pointer;}
+.lx-close,.lx-back,.lx-regen{background:var(--nx-surface2,#f5f7fb);border:1px solid var(--nx-line,#eceef4);color:var(--nx-ink,#0b0e17);border-radius:11px;padding:9px 14px;font-weight:600;font-size:14px;cursor:pointer;min-height:42px;}
 .lx-back{font-weight:700;}
 .lx-regen{color:var(--nx-accent,#5b5bf6);}
 .lx-sub{color:var(--nx-ink2,#6b7384);font-size:13px;margin:0 0 14px;}
@@ -197,16 +227,20 @@ const LX_CSS = `
 .lx-list{display:flex;flex-direction:column;gap:8px;}
 .lx-item{display:flex;align-items:center;gap:10px;border:1px solid var(--nx-line,#eceef4);border-radius:14px;padding:12px 14px;transition:border-color .15s;}
 .lx-item.done{border-color:rgba(91,91,246,.3);background:linear-gradient(120deg,rgba(91,91,246,.04),transparent);}
-.lx-item-main{flex:1;cursor:pointer;min-width:0;}
+.lx-item-main{flex:1;cursor:pointer;min-width:0;background:transparent;border:0;color:inherit;text-align:left;padding:0;border-radius:8px;}
+.lx-item-main:disabled{cursor:default;}
 .lx-item-text{display:flex;flex-direction:column;gap:2px;}
 .lx-item-title{font-weight:700;font-size:15px;display:flex;align-items:center;gap:7px;}
 .lx-dot{width:7px;height:7px;border-radius:50%;background:var(--nx-accent,#5b5bf6);display:inline-block;}
 .lx-item-sub{font-size:12.5px;color:var(--nx-ink2,#6b7384);}
-.lx-gen,.lx-view{border:none;border-radius:11px;padding:10px 16px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap;min-width:96px;display:grid;place-items:center;}
+.lx-gen,.lx-view{border:none;border-radius:11px;padding:10px 16px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap;min-width:104px;min-height:42px;display:grid;place-items:center;}
 .lx-gen{background:linear-gradient(135deg,var(--nx-accent,#5b5bf6),var(--nx-accent2,#22d3ee));color:#fff;}
 .lx-view{background:var(--nx-surface2,#f5f7fb);border:1px solid var(--nx-line,#eceef4);color:var(--nx-ink,#0b0e17);}
 .lx-gen:disabled{opacity:.6;cursor:default;}
-.lx-spin{width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;animation:nx-spin .8s linear infinite;}
+.lx-busy-label{display:inline-flex;align-items:center;justify-content:center;gap:8px;}
+.lx-spin{width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;animation:lx-spin .8s linear infinite;flex:0 0 auto;}
+.lx-spin.dark{border-color:rgba(91,91,246,.22);border-top-color:var(--nx-accent,#5b5bf6);}
+@keyframes lx-spin{to{transform:rotate(360deg);}}
 
 /* markdown */
 .lx-md{font-size:15px;line-height:1.65;color:var(--nx-ink,#0b0e17);overflow-wrap:break-word;}
@@ -229,5 +263,17 @@ const LX_CSS = `
 .lx-md hr{border:none;border-top:1px solid var(--nx-line,#eceef4);margin:16px 0;}
 .lx-md .katex{font-size:1.05em;}
 .lx-md .katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0;}
-@media (max-width:420px){.lx-modal{padding:14px;border-radius:18px;}.lx-md h1{font-size:21px;}}
+@media (max-width:640px){
+  .lx-overlay{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);background:var(--nx-surface,#fff);backdrop-filter:none;overflow:hidden;}
+  .lx-modal{max-width:none;max-height:none;height:calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));border:0;border-radius:0;padding:14px 14px 28px;margin:0;box-shadow:none;}
+  .lx-head{top:-14px;padding:14px 0 10px;}
+  .lx-item{align-items:stretch;padding:12px;gap:8px;}
+  .lx-item-main{display:flex;align-items:center;}
+  .lx-gen,.lx-view{min-width:92px;padding-inline:12px;}
+  .lx-md h1{font-size:21px;}
+}
+@media (max-width:360px){
+  .lx-item{flex-direction:column;}
+  .lx-gen,.lx-view{width:100%;}
+}
 `;

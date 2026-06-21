@@ -276,7 +276,7 @@ function toChangeItem(item: RawChangeItem | null | undefined, index: number): Jo
     translation,
     options: Array.isArray(item?.options)
       ? item.options
-          .filter((option): option is string => typeof option === "string" && option.trim())
+          .filter((option): option is string => typeof option === "string" && Boolean(option.trim()))
           .map((option) => extractBlankAnswer(template, option))
       : undefined,
   };

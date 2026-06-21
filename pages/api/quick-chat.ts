@@ -33,13 +33,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const language = typeof body?.language === "string" ? body.language.trim() : "";
   const message = typeof body?.message === "string" ? body.message.trim() : "";
   const profileSummary = typeof body?.profileSummary === "string" ? body.profileSummary.trim() : "";
-  const history = Array.isArray(body?.history)
-    ? body.history
+  const history: QuickHistoryItem[] = Array.isArray(body?.history)
+    ? (body.history as unknown[])
         .filter(
-          (item): item is QuickHistoryItem =>
-            item &&
-            (item.role === "user" || item.role === "assistant") &&
-            typeof item.text === "string"
+          (item: unknown): item is QuickHistoryItem => {
+            if (!item || typeof item !== "object") return false;
+            const candidate = item as Partial<QuickHistoryItem>;
+            return (
+              (candidate.role === "user" || candidate.role === "assistant") &&
+              typeof candidate.text === "string"
+            );
+          }
         )
         .slice(-14)
     : [];
