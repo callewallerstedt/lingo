@@ -208,3 +208,50 @@ create policy "Journey progress is self writable"
 create policy "Journey progress is self updatable"
   on journey_progress for update
   using (auth.uid() = user_id);
+
+-- Surge (rebuilt) per-user state: full SaState JSON keyed by user + language.
+create table if not exists surge_arc_state (
+  user_id uuid references auth.users on delete cascade,
+  language text not null,
+  state jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, language)
+);
+
+alter table surge_arc_state enable row level security;
+
+create policy "Surge arc state is self readable"
+  on surge_arc_state for select
+  using (auth.uid() = user_id);
+
+create policy "Surge arc state is self writable"
+  on surge_arc_state for insert
+  with check (auth.uid() = user_id);
+
+create policy "Surge arc state is self updatable"
+  on surge_arc_state for update
+  using (auth.uid() = user_id);
+
+-- Generated grammar lessons, saved per user / language / topic.
+create table if not exists surge_lessons (
+  user_id uuid references auth.users on delete cascade,
+  language text not null,
+  topic_id text not null,
+  markdown text not null,
+  created_at timestamptz not null default now(),
+  primary key (user_id, language, topic_id)
+);
+
+alter table surge_lessons enable row level security;
+
+create policy "Surge lessons are self readable"
+  on surge_lessons for select
+  using (auth.uid() = user_id);
+
+create policy "Surge lessons are self writable"
+  on surge_lessons for insert
+  with check (auth.uid() = user_id);
+
+create policy "Surge lessons are self updatable"
+  on surge_lessons for update
+  using (auth.uid() = user_id);

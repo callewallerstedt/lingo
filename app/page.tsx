@@ -5,6 +5,9 @@ import type { User } from "@supabase/supabase-js";
 import type { Difficulty } from "../lib/store";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { SCENARIOS, type ScenarioDefinition } from "../lib/scenarios";
+import SurgeArc from "./SurgeArc";
+import type { SaState } from "../lib/surgeArc";
+import type { LessonContent } from "../lib/lessons";
 import {
   DEFAULT_SURGE_MODE_PREFERENCES,
   SURGE_MODE_KEY,
@@ -1232,9 +1235,11 @@ export default function Home() {
     };
   }, []);
 
+  const surgeRedirectRef = useRef(false);
   useEffect(() => {
     if (authLoading) return;
     if (!authUser) {
+      surgeRedirectRef.current = false;
       setSurgeHydrated(false);
       setJourneyHydrated(false);
       pendingSurgeSyncRef.current = {};
@@ -1260,6 +1265,11 @@ export default function Home() {
       return;
     }
     setAuthError(null);
+    // Land returning/just-signed-in users straight on the Surge hub.
+    if (!surgeRedirectRef.current) {
+      surgeRedirectRef.current = true;
+      setView("surge");
+    }
     void fetchProgress();
     void loadProfile();
   }, [authLoading, authUser]);
@@ -5073,36 +5083,66 @@ export default function Home() {
     void openJourneyPart(nextPart.chapterId, nextPart.partId);
   }
 
-  async function startSurgeSession(forceNew = false) {
-    if (!authUser || !language) {
-      setSurgeError("Choose a language before starting Surge.");
-      setView("surge");
-      return;
-    }
-    setView("surge");
-    setSurgeLoading(true);
+  // Surge is now handled by the self-contained <SurgeArc /> module, which loads
+  // its own deck (built-in + AI-enriched) and persists progress locally. We just
+  // navigate to the view; the parameter is kept for the existing call sites.
+  async function startSurgeSession(_forceNew = false) {
+    void _forceNew;
     setSurgeError(null);
+    setView("surge");
+  }
+
+  // Per-user persistence for the rebuilt Surge (<SurgeArc/>). Stores the full
+  // SaState JSON in surge_arc_state; no-ops when signed out (localStorage only).
+  async function loadSurgeArcRemote(lang: string): Promise<SaState | null> {
+    if (!authUser) return null;
     try {
-      if (!forceNew && surgeSession && surgeSession.language === language) {
-        return;
-      }
-      let nextSession = createEmptySurgeSession(language);
-      nextSession = await ensureSurgeReserve(nextSession);
-      nextSession = await buildNextSurgeRound(nextSession);
-      if (!nextSession.activeRound.length) {
-        setSurgeError("Surge could not load new items right now.");
-        return;
-      }
-      setSurgeSession(nextSession);
-    } catch (error) {
-      const message =
-        error instanceof Error && error.message.trim()
-          ? error.message
-          : "Surge could not load new items right now.";
-      setSurgeError(message);
-    } finally {
-      setSurgeLoading(false);
+      const { data, error } = await supabase
+        .from("surge_arc_state")
+        .select("state")
+        .eq("user_id", authUser.id)
+        .eq("language", lang)
+        .maybeSingle();
+      if (error || !data || !data.state) return null;
+      return data.state as SaState;
+    } catch {
+      return null;
     }
+  }
+
+  function saveSurgeArcRemote(next: SaState) {
+    if (!authUser) return;
+    void supabase.from("surge_arc_state").upsert(
+      { user_id: authUser.id, language: next.language, state: next, updated_at: new Date().toISOString() },
+      { onConflict: "user_id,language" }
+    );
+  }
+
+  async function loadLessonsRemote(lang: string): Promise<Record<string, LessonContent> | null> {
+    if (!authUser) return null;
+    try {
+      const { data, error } = await supabase
+        .from("surge_lessons")
+        .select("topic_id, markdown, created_at")
+        .eq("user_id", authUser.id)
+        .eq("language", lang);
+      if (error || !data) return null;
+      const map: Record<string, LessonContent> = {};
+      for (const row of data as Array<{ topic_id: string; markdown: string; created_at: string }>) {
+        map[row.topic_id] = { topicId: row.topic_id, language: lang, markdown: row.markdown, createdAt: new Date(row.created_at).getTime() };
+      }
+      return map;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveLessonRemote(lang: string, content: LessonContent) {
+    if (!authUser) return;
+    void supabase.from("surge_lessons").upsert(
+      { user_id: authUser.id, language: lang, topic_id: content.topicId, markdown: content.markdown, created_at: new Date(content.createdAt).toISOString() },
+      { onConflict: "user_id,language,topic_id" }
+    );
   }
 
   function getCurrentSurgePrompt(session: SurgeSession | null) {
@@ -10191,33 +10231,45 @@ export default function Home() {
         {authLoading ? (
           <div className="loading-panel">Loading</div>
         ) : !authUser ? (
-          <div className="auth-panel">
-            <h2>Welcome back</h2>
-            <p>Sign in to track scenario progress and unlock rewards.</p>
-            <div className="auth-field">
-              <label className="label">Username</label>
+          <div className="lg-auth">
+            <style dangerouslySetInnerHTML={{ __html: LOGIN_CSS }} />
+            <div className="lg-card">
+              <div className="lg-logo">
+                <span className="lg-logo-dot" /> NeoLingo
+              </div>
+              <h2 className="lg-title">Speak fluently.</h2>
+              <p className="lg-sub">Sign in or create an account — it takes a second.</p>
+              <label className="lg-label">Username</label>
               <input
+                className="lg-input"
                 type="text"
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
-                placeholder="admin"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void handleLogin();
+                }}
+                placeholder="your name"
+                autoComplete="username"
+                autoCapitalize="off"
+                autoCorrect="off"
               />
-            </div>
-            <div className="auth-field">
-              <label className="label">Password</label>
+              <label className="lg-label">Password</label>
               <input
+                className="lg-input"
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="admin"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void handleLogin();
+                }}
+                placeholder="••••••••"
+                autoComplete="current-password"
               />
-            </div>
-            {authError ? <div className="auth-error">{authError}</div> : null}
-            <button type="button" className="solid" onClick={handleLogin}>
-              Sign in
-            </button>
-            <div className="auth-note">
-              Admin default: username "admin" and password "admin".
+              {authError ? <div className="lg-error">{authError}</div> : null}
+              <button type="button" className="lg-btn" onClick={() => void handleLogin()}>
+                Continue
+              </button>
+              <div className="lg-note">New here? Pick any username &amp; password — we’ll create your account automatically.</div>
             </div>
           </div>
         ) : view === "dashboard" ? (
@@ -10348,7 +10400,16 @@ export default function Home() {
         ) : view === "topic-detail" ? (
           topicDetailView
         ) : view === "surge" ? (
-          surgeView
+          <SurgeArc
+            language={language}
+            onPlayAudio={(text) => void playFlashcardAudio("surge", text)}
+            onExit={() => setView("dashboard")}
+            userId={authUser?.id ?? null}
+            onLoadRemote={loadSurgeArcRemote}
+            onSaveRemote={saveSurgeArcRemote}
+            onLoadLessons={loadLessonsRemote}
+            onSaveLesson={saveLessonRemote}
+          />
         ) : (
           chatView
         )}
@@ -10759,3 +10820,19 @@ export default function Home() {
     </div>
   );
 }
+
+const LOGIN_CSS = `
+.lg-auth{position:fixed;inset:0;min-height:100dvh;display:grid;place-items:center;padding:24px;background:radial-gradient(130% 60% at 50% -10%,rgba(91,91,246,.10),transparent 55%),radial-gradient(90% 50% at 100% 0%,rgba(34,211,238,.08),transparent 55%),#fbfcfe;z-index:50;}
+.lg-card{width:100%;max-width:380px;background:#fff;border:1px solid #eceef4;border-radius:24px;padding:30px 24px calc(28px + env(safe-area-inset-bottom));box-shadow:0 1px 2px rgba(11,14,23,.04),0 24px 50px -28px rgba(30,40,90,.4);}
+.lg-logo{display:flex;align-items:center;gap:8px;font-weight:800;font-size:16px;color:#0b0e17;margin-bottom:18px;}
+.lg-logo-dot{width:12px;height:12px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#22d3ee 45%,#5b5bf6 80%);box-shadow:0 0 12px -1px rgba(91,91,246,.7);}
+.lg-title{font-size:26px;font-weight:800;letter-spacing:-0.02em;margin:0 0 4px;color:#0b0e17;}
+.lg-sub{color:#6b7384;font-size:14px;margin:0 0 22px;}
+.lg-label{display:block;font-size:12.5px;font-weight:700;color:#6b7384;margin:0 0 6px;}
+.lg-input{width:100%;font-size:16px;padding:14px;border:1.5px solid #e3e6ef;border-radius:14px;background:#f8fafc;color:#0b0e17;outline:none;margin-bottom:14px;-webkit-tap-highlight-color:transparent;box-sizing:border-box;}
+.lg-input:focus{border-color:#5b5bf6;background:#fff;}
+.lg-error{background:rgba(244,81,108,.08);border:1px solid rgba(244,81,108,.3);color:#d83a52;border-radius:12px;padding:10px 12px;font-size:13px;margin-bottom:14px;}
+.lg-btn{width:100%;border:none;border-radius:14px;padding:16px;font-size:16px;font-weight:800;color:#fff;cursor:pointer;background:linear-gradient(120deg,#5b5bf6,#6d6df8 55%,#22d3ee 140%);box-shadow:0 12px 26px -12px rgba(91,91,246,.7);touch-action:manipulation;}
+.lg-btn:active{transform:translateY(1px) scale(.99);}
+.lg-note{color:#8b94a8;font-size:12px;text-align:center;margin-top:14px;line-height:1.5;}
+`;

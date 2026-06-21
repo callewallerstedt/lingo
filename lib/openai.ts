@@ -1,5 +1,6 @@
 export const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-mini";
-export const OPENAI_HEAVY_MODEL = process.env.OPENAI_HEAVY_MODEL || "gpt-5.4";
+// Heavy reasoning model — used for big structuring tasks (e.g. building courses).
+export const OPENAI_HEAVY_MODEL = process.env.OPENAI_HEAVY_MODEL || "gpt-5.5";
 export const TRANSLATION_MODEL = process.env.OPENAI_TRANSLATION_MODEL || OPENAI_MODEL;
 export const TTS_MODEL = process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts";
 export const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe";
