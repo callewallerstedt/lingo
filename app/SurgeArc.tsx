@@ -1260,7 +1260,16 @@ function FeedbackBar({ status, card, answer, onNext }: { status: "correct" | "wr
 function AudioButton({ text, onPlayAudio }: { text: string; onPlayAudio?: (t: string) => void }) {
   if (!onPlayAudio) return null;
   return (
-    <button type="button" className="nx-audio" onClick={() => onPlayAudio(text)} aria-label="Play audio">
+    <button
+      type="button"
+      className="nx-audio"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        onPlayAudio(text);
+      }}
+      aria-label="Play audio"
+    >
       <Icon name="audio" size={18} />
     </button>
   );

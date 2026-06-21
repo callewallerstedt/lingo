@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -58,6 +58,7 @@ export default function LessonsPanel({
   const [openId, setOpenId] = useState<string | null>(initialOpenId);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [errorId, setErrorId] = useState<string | null>(null);
+  const [remoteChecked, setRemoteChecked] = useState(false);
   const loadRemoteRef = useRef(loadRemote);
   const saveRemoteRef = useRef(saveRemote);
 
@@ -72,10 +73,14 @@ export default function LessonsPanel({
   useEffect(() => {
     setLessons(loadLocal(language));
     setOpenId(initialOpenId);
+    setRemoteChecked(false);
     let cancelled = false;
     (async () => {
       const load = loadRemoteRef.current;
-      if (!load) return;
+      if (!load) {
+        setRemoteChecked(true);
+        return;
+      }
       try {
         const remote = await load(language);
         if (cancelled || !remote) return;
@@ -89,6 +94,8 @@ export default function LessonsPanel({
         });
       } catch {
         /* keep local */
+      } finally {
+        if (!cancelled) setRemoteChecked(true);
       }
     })();
     return () => {
@@ -96,7 +103,7 @@ export default function LessonsPanel({
     };
   }, [initialOpenId, language]);
 
-  const generate = async (topic: LessonTopic) => {
+  const generate = useCallback(async (topic: LessonTopic) => {
     if (busyId) return;
     setBusyId(topic.id);
     setErrorId(null);
@@ -122,10 +129,15 @@ export default function LessonsPanel({
     } finally {
       setBusyId(null);
     }
-  };
+  }, [busyId, language]);
 
   const open = openId ? lessons[openId] : null;
   const openTopic = openId ? LESSON_TOPICS.find((t) => t.id === openId) : null;
+
+  useEffect(() => {
+    if (!openId || !openTopic || open || busyId || !remoteChecked || errorId === openTopic.id) return;
+    void generate(openTopic);
+  }, [busyId, errorId, generate, open, openId, openTopic, remoteChecked]);
 
   const grouped = useMemo(
     () => LESSON_CATEGORIES.map((cat) => ({ cat, topics: LESSON_TOPICS.filter((t) => t.category === cat) })),
@@ -136,14 +148,14 @@ export default function LessonsPanel({
     <div className="lx-overlay" onClick={busyId ? undefined : onClose}>
       <LessonStyles />
       <div className="lx-modal" onClick={(e) => e.stopPropagation()}>
-        {open && openTopic ? (
+        {openTopic ? (
           <>
             <div className="lx-head">
               <button type="button" className="lx-back" onClick={() => setOpenId(null)}>
                 ‹ Lessons
               </button>
               <div className="lx-head-actions">
-                {onToggleComplete && (
+                {open && onToggleComplete && (
                   <button
                     type="button"
                     className={`lx-complete ${completedIds.includes(openTopic.id) ? "done" : ""}`}
@@ -156,16 +168,33 @@ export default function LessonsPanel({
                   {busyId === openTopic.id ? (
                     <span className="lx-busy-label">
                       <span className="lx-spin dark" aria-hidden="true" />
-                      Regenerating
+                      {open ? "Regenerating" : "Generating"}
                     </span>
                   ) : (
-                    "Regenerate"
+                    open ? "Regenerate" : "Generate"
                   )}
                 </button>
               </div>
             </div>
             <div className="lx-md">
-              <InteractiveLessonMarkdown markdown={open.markdown} title={openTopic.title} />
+              {open ? (
+                <InteractiveLessonMarkdown markdown={open.markdown} title={openTopic.title} />
+              ) : (
+                <div className="lx-empty-state">
+                  {errorId === openTopic.id ? (
+                    <>
+                      <strong>Couldn&apos;t generate this lesson.</strong>
+                      <span>Check the connection/OpenAI key, then tap Generate.</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="lx-spin dark" aria-hidden="true" />
+                      <strong>{remoteChecked ? "Generating lesson" : "Checking saved lesson"}</strong>
+                      <span>{openTopic.title}</span>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </>
         ) : (
@@ -231,16 +260,53 @@ export default function LessonsPanel({
 
 function MarkdownBlock({ children }: { children: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+    <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} skipHtml>
       {children}
     </ReactMarkdown>
   );
 }
 
+function decodeLegacyEntities(value: string): string {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+function legacyAnswerToMarkdown(value: string): string {
+  return decodeLegacyEntities(value)
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|div|li)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .replace(/[ \t]+/g, " ");
+}
+
+function normalizeLessonSource(markdown: string): string {
+  let source = decodeLegacyEntities(markdown).replace(/<br\s*\/?>/gi, "\n");
+  source = source.replace(
+    /<details\b[^>]*>[\s\S]*?<summary\b[^>]*>[\s\S]*?<\/summary>([\s\S]*?)<\/details>/gi,
+    (_match, body: string) => `\nAnswer: ${legacyAnswerToMarkdown(body)}\n`
+  );
+  source = source.replace(
+    /<p\b[^>]*>\s*Answer:\s*([\s\S]*?)<\/p>/gi,
+    (_match, body: string) => `\nAnswer: ${legacyAnswerToMarkdown(body)}\n`
+  );
+  source = source.replace(
+    /<button\b[^>]*>\s*(?:show\s+answer|answer)\s*<\/button>\s*([\s\S]*?)(?=\n\s*(?:\d+[.)]\s+|[-*]\s+|#{1,6}\s+|<button\b|<details\b)|$)/gi,
+    (_match, body: string) => `\nAnswer: ${legacyAnswerToMarkdown(body)}\n`
+  );
+  return source.replace(/<\/?(?:p|div|section|article)\b[^>]*>/gi, "\n").replace(/\n{4,}/g, "\n\n\n");
+}
+
 function InteractiveLessonMarkdown({ markdown, title }: { markdown: string; title: string }) {
-  const source = /(^|\n)##\s+Quick practice\b/i.test(markdown)
-    ? markdown
-    : `${markdown}\n\n## Quick practice\n\n1. Write one short example using ${title}.\nAnswer: Compare your sentence with the Forms and Examples sections above.\n\n2. Change that example to a different person or number.\nAnswer: Check that the subject and form agree with the reference table.\n\n3. Say the same idea as a question or negative sentence.\nAnswer: Use the question or negation pattern explained in this lesson.`;
+  const normalizedMarkdown = normalizeLessonSource(markdown);
+  const source = /(^|\n)##\s+Quick practice\b/i.test(normalizedMarkdown)
+    ? normalizedMarkdown
+    : `${normalizedMarkdown}\n\n## Quick practice\n\n1. Write one short example using ${title}.\nAnswer: Compare your sentence with the Forms and Examples sections above.\n\n2. Change that example to a different person or number.\nAnswer: Check that the subject and form agree with the reference table.\n\n3. Say the same idea as a question or negative sentence.\nAnswer: Use the question or negation pattern explained in this lesson.`;
   const blocks: Array<{ type: "markdown" | "answer"; value: string }> = [];
   const buffer: string[] = [];
   let inPractice = false;
@@ -251,7 +317,7 @@ function InteractiveLessonMarkdown({ markdown, title }: { markdown: string; titl
   };
   for (const line of source.split("\n")) {
     if (/^##\s+Quick practice\b/i.test(line.trim())) inPractice = true;
-    const answer = inPractice ? line.match(/^\s*Answer:\s*(.+)\s*$/i) : null;
+    const answer = inPractice ? line.match(/^\s*Answer:\s*(.*)\s*$/i) : null;
     if (answer) {
       flush();
       blocks.push({ type: "answer", value: answer[1] });
@@ -312,6 +378,8 @@ const LX_CSS = `
 .lx-spin{width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;animation:lx-spin .8s linear infinite;flex:0 0 auto;}
 .lx-spin.dark{border-color:rgba(91,91,246,.22);border-top-color:var(--nx-accent,#5b5bf6);}
 @keyframes lx-spin{to{transform:rotate(360deg);}}
+.lx-empty-state{min-height:240px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px;color:var(--nx-ink2,#6b7384);border:1px dashed var(--nx-line,#eceef4);border-radius:16px;background:var(--nx-surface2,#f5f7fb);padding:24px;}
+.lx-empty-state strong{color:var(--nx-ink,#0b0e17);font-size:16px;}
 
 /* markdown */
 .lx-md{font-size:15px;line-height:1.65;color:var(--nx-ink,#0b0e17);overflow-wrap:break-word;}
