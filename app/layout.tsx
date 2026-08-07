@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "NeoLingo",
-  description: "Real conversations, word by word.",
+  title: "NeoLingo — Svenska",
+  description: "Learn Swedish from scratch to fluent: lessons, flashcards, grammar and an AI tutor.",
   applicationName: "NeoLingo",
   manifest: "/manifest.webmanifest",
   icons: {
@@ -15,32 +15,28 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
+    // Lets the app paint under the status bar for a full-bleed feel on iOS.
     statusBarStyle: "black-translucent",
     title: "NeoLingo",
   },
-  formatDetection: {
-    telephone: false,
-  },
+  formatDetection: { telephone: false },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
+  userScalable: false,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#17181c" },
-    { media: "(prefers-color-scheme: light)", color: "#fff7f0" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b1622" },
+    { media: "(prefers-color-scheme: light)", color: "#f6f8fb" },
   ],
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="de">
       <body>{children}</body>
     </html>
   );
