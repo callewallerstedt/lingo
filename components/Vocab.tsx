@@ -188,8 +188,8 @@ function WordRow({
   onReset: () => void;
 }) {
   return (
-    <div style={{ borderTop: "1px solid var(--border)" }}>
-      <button type="button" className="list__item" onClick={onToggle} style={{ borderTop: "none" }}>
+    <div style={{ boxShadow: "inset 0 1px 0 var(--hairline)" }}>
+      <button type="button" className="list__item" onClick={onToggle}>
         <span className="list__body">
           <span className="list__title">
             {word.sv}

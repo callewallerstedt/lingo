@@ -13,3 +13,6 @@ pnpm-debug.log*
 # Local agent/dev-only
 .claude/
 app/surge-test/
+
+.vercel
+.env*

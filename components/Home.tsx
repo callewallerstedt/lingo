@@ -55,7 +55,7 @@ export function Home({ onGo, onOpenLesson }: { onGo: (tab: Tab) => void; onOpenL
 
   return (
     <div className="stack--lg">
-      <div className="card row" style={{ gap: 18 }}>
+      <div className="card row home-hero" style={{ gap: 18 }}>
         <Ring value={goalPct} label={`${stats.today.reviews}`} sub={`/ ${progress.settings.dailyGoal}`} />
         <div className="stack--sm" style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: "1.15rem", fontWeight: 650 }}>Hej {progress.name || "Tiffy"}! 🇸🇪</div>
@@ -64,7 +64,7 @@ export function Home({ onGo, onOpenLesson }: { onGo: (tab: Tab) => void; onOpenL
               ? "Lektion heute erledigt. Snyggt jobbat!"
               : "Noch keine Lektion heute — eine reicht schon."}
           </div>
-          <div className="row" style={{ gap: 6 }}>
+          <div className="row home-hero__badges" style={{ gap: 6 }}>
             <span className="chip">🔥 {progress.streak} Tage</span>
             <span className="chip">⭐ {progress.xp} XP</span>
           </div>

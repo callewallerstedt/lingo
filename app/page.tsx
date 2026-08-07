@@ -88,9 +88,13 @@ function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <span style={{ fontSize: "1.3rem" }}>🇸🇪</span>
-        <h1>{heading.title}</h1>
-        <span className="topbar__sub">{heading.sub}</span>
+        <span style={{ fontSize: "1.4rem" }}>🇸🇪</span>
+        {/* Title and subtitle stack, so a long subtitle can't squeeze the title
+            on a 375px screen. */}
+        <span className="topbar__titles">
+          <h1>{heading.title}</h1>
+          <span className="topbar__sub">{heading.sub}</span>
+        </span>
         <span className="sync-dot" data-state={syncState} title={`Sync: ${syncState}`} />
       </header>
 
