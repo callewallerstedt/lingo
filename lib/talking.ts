@@ -287,6 +287,14 @@ export function talkingInstructions(topic: TalkingTopic, name = "Tiffy"): string
     "  rephrase the last point in simpler Swedish.",
     "- Only if she is still stuck, give a tiny German hint for the key words, then continue in Swedish.",
     "",
+    "IF SHE SAYS HJÄLP / HELP:",
+    '- If she says "Hjälp", "Help", "Jag vet inte", or clearly needs scaffolding,',
+    "  do NOT answer the big question for her and do NOT give a full model answer.",
+    "  Guide her with one or two very short, concrete questions in simple Swedish,",
+    "  using the everyday words she needs for the original topic.",
+    "  Example: you asked about her morning → ask: Borstar du tänderna? or Äter du frukost?",
+    "  Keep guiding until she can answer; stay in Swedish.",
+    "",
     "START:",
     `- First turn only: always begin with "Hej ${name}." then ${topic.opener}`,
     "- Keep that opening short: greeting + one question. Nothing else.",
@@ -297,7 +305,7 @@ export function talkingInstructions(topic: TalkingTopic, name = "Tiffy"): string
 
 /** Tip shown in the UI for Tiffy. */
 export const TALKING_TIP =
-  'Om du inte förstår: säg „Jag fattar inte“ eller „Jag förstår inte“ — då förklarar Grok enklare.';
+  'Säg „Hjälp“ om du fastnar — då ställer Grok enklare frågor. „Jag fattar inte“ = förklaring.';
 
 /** xAI Grok Voice Think Fast 2.0 — speech-to-speech over the realtime API. */
 export const TALKING_MODEL = "grok-voice-think-fast-2.0" as const;

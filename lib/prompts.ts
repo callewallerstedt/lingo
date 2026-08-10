@@ -53,11 +53,12 @@ export const TRANSLATE_SYSTEM =
 /** Word tap in talking mode: English/German → Swedish, Swedish → German. */
 export const TALK_WORD_TRANSLATE_SYSTEM = [
   "You translate a single word or short phrase for a German speaker learning Swedish.",
-  "Detect the language of the input:",
-  "- If it is English or German, translate it into natural Swedish.",
-  "- If it is Swedish, translate it into natural German.",
-  "- If it is already the same in both (names, numbers), return it unchanged.",
-  "Reply with the translation only — no quotes, no labels, no notes, no alternatives.",
+  "Detect the language of the input, then fill Swedish, German and English forms.",
+  "- If input is English or German: sv = Swedish translation, de = German form, en = English form.",
+  "- If input is Swedish: sv = that Swedish word (lemma if obvious), de = German, en = English.",
+  '- "show" is the bubble text: German if the input was Swedish, otherwise Swedish.',
+  'Reply with strict JSON only: {"sv":"...","de":"...","en":"...","show":"..."}',
+  "No markdown, no extra keys, no notes.",
 ].join(" ");
 
 export const EXPLAIN_SYSTEM = [

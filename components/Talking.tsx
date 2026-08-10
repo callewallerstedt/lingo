@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { experimental_useRealtime as useRealtime } from "@ai-sdk/react";
 import { xai } from "@ai-sdk/xai";
 import { useStore } from "@/lib/state";
+import { buildCustomWord, findCorpusWord } from "@/lib/talkWords";
 import {
   CUSTOM_TOPIC_ID,
   TALKING_MODEL,
@@ -54,17 +55,28 @@ function readTranscript(event: { type: string; [key: string]: unknown }): { item
   return { itemId, text };
 }
 
+type TalkWordPayload = {
+  show: string;
+  sv: string;
+  de: string;
+  en: string;
+};
+
 type WordBubble = {
   key: string;
   word: string;
   translation: string;
+  sv: string;
+  de: string;
+  en: string;
   loading: boolean;
+  saved: boolean;
   /** Viewport anchor for a fixed overlay so it isn't clipped by tips/scroll. */
   x: number;
   y: number;
 };
 
-const wordCache = new Map<string, string>();
+const wordCache = new Map<string, TalkWordPayload>();
 
 function waitFor(
   check: () => boolean,
@@ -140,9 +152,21 @@ function TappableLine({
 }
 
 export function Talking({ onExit }: { onExit: () => void }) {
-  const { progress } = useStore();
+  const { progress, saveTalkWord } = useStore();
   const model = useMemo(() => xai.experimental_realtime(TALKING_MODEL), []);
   const name = progress.name || "Tiffy";
+
+  const isWordSaved = useCallback(
+    (sv: string) => {
+      const corpus = findCorpusWord(sv);
+      if (corpus) {
+        return Boolean(progress.cards[corpus.id]?.starred) || progress.saved.includes(corpus.id);
+      }
+      const custom = buildCustomWord({ sv, de: sv });
+      return Boolean(progress.customWords[custom.id]) || progress.saved.includes(custom.id);
+    },
+    [progress.cards, progress.customWords, progress.saved],
+  );
 
   const [topicId, setTopicId] = useState(TALKING_TOPICS[0]!.id);
   const [customText, setCustomText] = useState("");
@@ -471,11 +495,33 @@ export function Talking({ onExit }: { onExit: () => void }) {
     const cacheKey = normalized.toLocaleLowerCase("sv");
     const cached = wordCache.get(cacheKey);
     if (cached) {
-      setBubble({ key, word: normalized, translation: cached, loading: false, x, y });
+      setBubble({
+        key,
+        word: normalized,
+        translation: cached.show,
+        sv: cached.sv,
+        de: cached.de,
+        en: cached.en,
+        loading: false,
+        saved: isWordSaved(cached.sv),
+        x,
+        y,
+      });
       return;
     }
 
-    setBubble({ key, word: normalized, translation: "", loading: true, x, y });
+    setBubble({
+      key,
+      word: normalized,
+      translation: "",
+      sv: "",
+      de: "",
+      en: "",
+      loading: true,
+      saved: false,
+      x,
+      y,
+    });
     try {
       const response = await fetch("/api/translate", {
         method: "POST",
@@ -483,21 +529,58 @@ export function Talking({ onExit }: { onExit: () => void }) {
         // English/German → Swedish; Swedish → German (so she can drop in EN words).
         body: JSON.stringify({ text: normalized, mode: "talk-word" }),
       });
-      const data = (await response.json()) as { translation?: string };
-      const translation = (data.translation || "").trim() || "—";
-      wordCache.set(cacheKey, translation);
+      const data = (await response.json()) as {
+        translation?: string;
+        sv?: string;
+        de?: string;
+        en?: string;
+      };
+      const show = (data.translation || "").trim() || "—";
+      const sv = (data.sv || normalized).trim();
+      const de = (data.de || show).trim();
+      const en = (data.en || "").trim() || de;
+      const payload: TalkWordPayload = { show, sv, de, en };
+      wordCache.set(cacheKey, payload);
       setBubble((current) =>
         current?.key === key
-          ? { key, word: normalized, translation, loading: false, x, y }
+          ? {
+              key,
+              word: normalized,
+              translation: show,
+              sv,
+              de,
+              en,
+              loading: false,
+              saved: isWordSaved(sv),
+              x,
+              y,
+            }
           : current,
       );
     } catch {
       setBubble((current) =>
         current?.key === key
-          ? { key, word: normalized, translation: "Ingen översättning", loading: false, x, y }
+          ? {
+              key,
+              word: normalized,
+              translation: "Ingen översättning",
+              sv: normalized,
+              de: "",
+              en: "",
+              loading: false,
+              saved: false,
+              x,
+              y,
+            }
           : current,
       );
     }
+  };
+
+  const onSaveBubbleWord = () => {
+    if (!bubble || bubble.loading || bubble.saved || !bubble.sv || !bubble.de) return;
+    saveTalkWord({ sv: bubble.sv, de: bubble.de, en: bubble.en });
+    setBubble((current) => (current ? { ...current, saved: true } : current));
   };
 
   const statusLabel =
@@ -681,7 +764,30 @@ export function Talking({ onExit }: { onExit: () => void }) {
           role="status"
           onClick={(event) => event.stopPropagation()}
         >
-          {bubble.loading ? "…" : bubble.translation || "—"}
+          {bubble.loading ? (
+            "…"
+          ) : (
+            <span className="talk-word-bubble__row">
+              <span>{bubble.translation || "—"}</span>
+              {bubble.de ? (
+                <button
+                  type="button"
+                  className={
+                    bubble.saved
+                      ? "talk-word-bubble__save talk-word-bubble__save--on"
+                      : "talk-word-bubble__save"
+                  }
+                  aria-label={bubble.saved ? "Sparad till flashcards" : "Lägg till flashcards"}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSaveBubbleWord();
+                  }}
+                >
+                  {bubble.saved ? "✓" : "+"}
+                </button>
+              ) : null}
+            </span>
+          )}
         </div>
       ) : null}
     </div>

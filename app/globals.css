@@ -1387,6 +1387,35 @@ input[type="range"] {
   text-wrap: balance;
 }
 
+.talk-word-bubble__row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.talk-word-bubble__save {
+  pointer-events: auto;
+  flex: none;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.talk-word-bubble__save--on {
+  background: rgba(255, 255, 255, 0.34);
+}
+
 .talk-word-bubble--fixed::after {
   content: "";
   position: absolute;

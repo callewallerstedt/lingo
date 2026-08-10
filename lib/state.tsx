@@ -5,6 +5,7 @@ import type { CardState, Progress, Settings } from "./types";
 import { computeStreak, emptyProgress, hydrateProgress, todayKey } from "./progress";
 import { mergeProgress } from "./merge";
 import { newCard, schedule, type Grade } from "./srs";
+import { buildCustomWord, findCorpusWord } from "./talkWords";
 
 const STORAGE_KEY = "neolingo.progress.v2";
 const PROFILE_KEY = "neolingo.profile";
@@ -29,6 +30,8 @@ type Store = {
   setProfileId: (id: string) => void;
   saveChat: (thread: Progress["chats"][number]) => void;
   deleteChat: (id: string) => void;
+  /** Save a word from talking mode into flashcards (corpus match or custom). */
+  saveTalkWord: (input: { sv: string; de: string; en?: string }) => string;
   resetAll: () => void;
   syncNow: () => Promise<void>;
 };
@@ -298,6 +301,34 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     [mutate],
   );
 
+  const saveTalkWord = useCallback(
+    (input: { sv: string; de: string; en?: string }) => {
+      const corpus = findCorpusWord(input.sv);
+      const word = corpus ?? buildCustomWord(input);
+      mutate((current) => {
+        const existing = current.cards[word.id] ?? newCard();
+        const cards = {
+          ...current.cards,
+          [word.id]: {
+            ...existing,
+            starred: true,
+            archived: false,
+            // Make it show up soon in the review queue.
+            due: Math.min(existing.due || Date.now(), Date.now()),
+          },
+        };
+        const saved = current.saved.includes(word.id) ? current.saved : [...current.saved, word.id];
+        const customWords =
+          corpus || current.customWords[word.id]
+            ? current.customWords
+            : { ...current.customWords, [word.id]: word };
+        return { ...current, cards, saved, customWords };
+      });
+      return word.id;
+    },
+    [mutate],
+  );
+
   const setProfileId = useCallback((id: string) => {
     const cleaned = id.trim().toLowerCase().replace(/[^a-z0-9-]/g, "") || "tiffy";
     localStorage.setItem(PROFILE_KEY, cleaned);
@@ -336,6 +367,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setProfileId,
       saveChat,
       deleteChat,
+      saveTalkWord,
       resetAll,
       syncNow,
     }),
@@ -355,6 +387,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setProfileId,
       saveChat,
       deleteChat,
+      saveTalkWord,
       resetAll,
       syncNow,
     ],

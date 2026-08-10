@@ -62,6 +62,7 @@ export function mergeProgress(a: Progress, b: Progress): Progress {
     streak: Math.max(a.streak, b.streak),
     lastActiveDay: newer.lastActiveDay > older.lastActiveDay ? newer.lastActiveDay : older.lastActiveDay,
     saved: [...new Set([...older.saved, ...newer.saved])],
+    customWords: { ...older.customWords, ...newer.customWords },
     chats,
     updatedAt: Math.max(a.updatedAt, b.updatedAt),
   };

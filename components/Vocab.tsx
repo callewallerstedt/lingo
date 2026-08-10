@@ -21,9 +21,12 @@ export function Vocab() {
 
   const results = useMemo(() => {
     const base = deckId === "all" ? WORDS : deckWords(deckId);
+    const custom = Object.values(progress.customWords);
+    const seen = new Set(base.map((word) => word.id));
+    const pool = [...base, ...custom.filter((word) => !seen.has(word.id))];
     const needle = query.trim().toLowerCase();
 
-    return base.filter((word) => {
+    return pool.filter((word) => {
       if (level !== "all" && word.level !== level) return false;
 
       const card = progress.cards[word.id];
@@ -39,7 +42,7 @@ export function Vocab() {
         word.en.toLowerCase().includes(needle)
       );
     });
-  }, [query, deckId, level, filter, progress.cards]);
+  }, [query, deckId, level, filter, progress.cards, progress.customWords]);
 
   const counts = useMemo(() => {
     let starred = 0;

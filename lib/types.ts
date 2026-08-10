@@ -116,6 +116,8 @@ export type Progress = {
   lastActiveDay: string;
   /** Word ids the learner added to their own list. */
   saved: string[];
+  /** Extra words saved from talking mode (and similar), keyed by id. */
+  customWords: Record<string, Word>;
   chats: ChatThread[];
   /** Epoch ms of the last local mutation, used for last-write-wins sync. */
   updatedAt: number;

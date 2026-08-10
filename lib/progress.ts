@@ -21,6 +21,7 @@ export function emptyProgress(name = ""): Progress {
     streak: 0,
     lastActiveDay: "",
     saved: [],
+    customWords: {},
     chats: [],
     updatedAt: 0,
   };
@@ -59,6 +60,8 @@ export function hydrateProgress(raw: unknown): Progress {
     streak: typeof input.streak === "number" ? input.streak : 0,
     lastActiveDay: typeof input.lastActiveDay === "string" ? input.lastActiveDay : "",
     saved: Array.isArray(input.saved) ? input.saved : [],
+    customWords:
+      input.customWords && typeof input.customWords === "object" ? (input.customWords as Progress["customWords"]) : {},
     chats: Array.isArray(input.chats) ? input.chats : [],
     updatedAt: typeof input.updatedAt === "number" ? input.updatedAt : 0,
   };

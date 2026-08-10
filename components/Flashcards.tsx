@@ -50,7 +50,14 @@ export function Flashcards() {
 
   const glossLang = progress.settings.glossLang;
 
-  const pool = useMemo(() => (deckId === "all" ? WORDS : deckWords(deckId)), [deckId]);
+  const pool = useMemo(() => {
+    const base = deckId === "all" ? WORDS : deckWords(deckId);
+    const custom = Object.values(progress.customWords);
+    if (!custom.length) return base;
+    // Talk-saved words aren't in a deck; keep them available in every filter.
+    const seen = new Set(base.map((word) => word.id));
+    return [...base, ...custom.filter((word) => !seen.has(word.id))];
+  }, [deckId, progress.customWords]);
 
   const queue = useMemo(
     () => buildQueue(pool, progress.cards, progress.settings.newPerDay, starredOnly),
