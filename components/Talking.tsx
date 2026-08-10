@@ -152,6 +152,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
   const [localLines, setLocalLines] = useState<TranscriptLine[]>([]);
   const [partialAssistant, setPartialAssistant] = useState("");
   const [bubble, setBubble] = useState<WordBubble | null>(null);
+  const [muted, setMuted] = useState(false);
 
   const topic: TalkingTopic = useMemo(() => {
     if (topicId === CUSTOM_TOPIC_ID) return makeCustomTopic(customText);
@@ -306,7 +307,30 @@ export function Talking({ onExit }: { onExit: () => void }) {
   const connected = realtime.status === "connected";
   const live = phase === "live" && connected;
   const speaking = live && realtime.isPlaying;
-  const listening = live && realtime.isCapturing && !realtime.isPlaying;
+  const listening = live && !muted && realtime.isCapturing && !realtime.isPlaying;
+
+  const setMicEnabled = useCallback((enabled: boolean) => {
+    const stream = micRef.current;
+    if (!stream) return;
+    for (const track of stream.getAudioTracks()) {
+      track.enabled = enabled;
+    }
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    setMuted((current) => {
+      const next = !current;
+      setMicEnabled(!next);
+      if (next) {
+        try {
+          realtime.clearAudioBuffer();
+        } catch {
+          // ignore
+        }
+      }
+      return next;
+    });
+  }, [realtime, setMicEnabled]);
 
   // Prefer our event-built lines only — mixing with SDK messages caused the
   // opening line to flash twice then disappear.
@@ -354,6 +378,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
     assistantItemRef.current = null;
     setPartialAssistant("");
     setBubble(null);
+    setMuted(false);
     setPhase("idle");
   }, [realtime]);
 
@@ -372,6 +397,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
     setLocalLines([]);
     setPartialAssistant("");
     setBubble(null);
+    setMuted(false);
 
     const selectedTopic = topic;
 
@@ -475,13 +501,15 @@ export function Talking({ onExit }: { onExit: () => void }) {
   const statusLabel =
     phase === "starting" || realtime.status === "connecting"
       ? "Startar…"
-      : speaking
-        ? "Grok pratar"
-        : listening
-          ? "Din tur"
-          : live
-            ? "Igång"
-            : "Redo";
+      : live && muted
+        ? "Mic av"
+        : speaking
+          ? "Grok pratar"
+          : listening
+            ? "Din tur"
+            : live
+              ? "Igång"
+              : "Redo";
 
   const topicLocked = phase !== "idle";
 
@@ -623,9 +651,20 @@ export function Talking({ onExit }: { onExit: () => void }) {
             {phase === "starting" ? "Startar…" : "Starta samtal"}
           </button>
         ) : (
-          <button type="button" className="btn btn--danger btn--lg btn--block" onClick={stopSession}>
-            Avsluta
-          </button>
+          <div className="talk__controls-row">
+            <button
+              type="button"
+              className={muted ? "btn btn--gold btn--lg talk__mute" : "btn btn--ghost btn--lg talk__mute"}
+              onClick={toggleMute}
+              aria-pressed={muted}
+              aria-label={muted ? "Slå på mikrofonen" : "Tysta mikrofonen"}
+            >
+              {muted ? "🔇 Mic av" : "🎤 Mic på"}
+            </button>
+            <button type="button" className="btn btn--danger btn--lg talk__end" onClick={stopSession}>
+              Avsluta
+            </button>
+          </div>
         )}
       </div>
 

@@ -1407,6 +1407,17 @@ input[type="range"] {
   flex: none;
 }
 
+.talk__controls-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.talk__mute,
+.talk__end {
+  width: 100%;
+}
+
 .talk-promo {
   background:
     radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--pink) 22%, transparent), transparent 55%),
