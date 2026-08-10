@@ -6,10 +6,15 @@ import { xai } from "@ai-sdk/xai";
 import type { UIMessage } from "ai";
 import { useStore } from "@/lib/state";
 import {
+  CUSTOM_TOPIC_ID,
   TALKING_MODEL,
+  TALKING_TIP,
+  TALKING_TOPICS,
   TALKING_VOICE,
-  pickTalkingTopic,
+  getTalkingTopic,
+  makeCustomTopic,
   talkingInstructions,
+  type TalkingTopic,
 } from "@/lib/talking";
 
 type Phase = "idle" | "starting" | "live";
@@ -19,6 +24,15 @@ type TranscriptLine = {
   role: "user" | "assistant";
   text: string;
 };
+
+type WordBubble = {
+  key: string;
+  word: string;
+  translation: string;
+  loading: boolean;
+};
+
+const wordCache = new Map<string, string>();
 
 function messageText(message: UIMessage): string {
   return message.parts
@@ -48,18 +62,88 @@ function waitFor(
   });
 }
 
+function tokenize(text: string): Array<{ type: "word" | "gap"; value: string }> {
+  const parts = text.split(/(\s+|[.,!?;:…"""''()\[\]{}])/u);
+  return parts
+    .filter((part) => part.length > 0)
+    .map((part) => ({
+      type: /[A-Za-zÀ-ÖØ-öø-ÿÅÄÖåäö]+/u.test(part) ? ("word" as const) : ("gap" as const),
+      value: part,
+    }));
+}
+
+function TappableLine({
+  text,
+  mine,
+  bubble,
+  onWordTap,
+}: {
+  text: string;
+  mine: boolean;
+  bubble: WordBubble | null;
+  onWordTap: (key: string, word: string) => void;
+}) {
+  const tokens = useMemo(() => tokenize(text), [text]);
+
+  return (
+    <div className={mine ? "bubble bubble--me talk-line" : "bubble bubble--them talk-line"}>
+      {tokens.map((token, index) => {
+        if (token.type === "gap") {
+          return <span key={`g-${index}`}>{token.value}</span>;
+        }
+
+        const key = `${token.value.toLocaleLowerCase("sv")}-${index}-${text.slice(0, 12)}`;
+        const active = bubble?.key === key;
+
+        return (
+          <span key={key} className="talk-word-wrap">
+            <button
+              type="button"
+              className={active ? "talk-word talk-word--on" : "talk-word"}
+              onClick={(event) => {
+                event.stopPropagation();
+                onWordTap(key, token.value);
+              }}
+            >
+              {token.value}
+            </button>
+            {active ? (
+              <span className="talk-word-bubble" role="status">
+                {bubble.loading ? "…" : bubble.translation || "—"}
+              </span>
+            ) : null}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Talking({ onExit }: { onExit: () => void }) {
   const { progress } = useStore();
-  const topic = useMemo(() => pickTalkingTopic(), []);
   const model = useMemo(() => xai.experimental_realtime(TALKING_MODEL), []);
   const name = progress.name || "Tiffy";
-  const instructions = useMemo(() => talkingInstructions(topic, name), [topic, name]);
 
-  // Must be referentially stable — useRealtime recreates the whole session
-  // whenever sessionConfig identity changes, which caused double-speak / stuck UI.
+  const [topicId, setTopicId] = useState(TALKING_TOPICS[0]!.id);
+  const [customText, setCustomText] = useState("");
+  const [showTranscript, setShowTranscript] = useState(true);
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [localLines, setLocalLines] = useState<TranscriptLine[]>([]);
+  const [partialAssistant, setPartialAssistant] = useState("");
+  const [bubble, setBubble] = useState<WordBubble | null>(null);
+
+  const topic: TalkingTopic = useMemo(() => {
+    if (topicId === CUSTOM_TOPIC_ID) return makeCustomTopic(customText);
+    return getTalkingTopic(topicId) ?? makeCustomTopic(customText);
+  }, [topicId, customText]);
+
+  // Keep this object identity stable for the whole screen lifetime. Topic/custom
+  // text is applied with a session-update after connect — if sessionConfig
+  // changes, useRealtime tears down the WebSocket and the call gets weird.
   const sessionConfig = useMemo(
     () => ({
-      instructions,
+      instructions: "Du är en svensk samtalspartner. Vänta på ämnet.",
       voice: TALKING_VOICE,
       turnDetection: {
         type: "server-vad" as const,
@@ -69,29 +153,46 @@ export function Talking({ onExit }: { onExit: () => void }) {
       providerOptions: {
         reasoning: { effort: "none" },
         audio: {
-          output: { speed: 0.78 },
+          output: { speed: 0.72 },
           input: {
-            // Ask xAI for user speech transcripts so the toggle has content.
             transcription: {},
           },
         },
       },
     }),
-    [instructions],
+    [],
   );
 
-  const [showTranscript, setShowTranscript] = useState(true);
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [error, setError] = useState<string | null>(null);
-  const [localLines, setLocalLines] = useState<TranscriptLine[]>([]);
-  const [partialAssistant, setPartialAssistant] = useState("");
+  const topicConfig = useCallback(
+    (selected: TalkingTopic) => ({
+      instructions: talkingInstructions(selected, name),
+      voice: TALKING_VOICE,
+      turnDetection: {
+        type: "server-vad" as const,
+        silenceDurationMs: 1100,
+        threshold: 0.55,
+      },
+      providerOptions: {
+        reasoning: { effort: "none" },
+        audio: {
+          output: { speed: 0.72 },
+          input: {
+            transcription: {},
+          },
+        },
+      },
+    }),
+    [name],
+  );
 
   const micRef = useRef<MediaStream | null>(null);
   const startingRef = useRef(false);
   const kickedOffRef = useRef(false);
   const statusRef = useRef("disconnected");
   const logRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const assistantItemRef = useRef<string | null>(null);
+  const speakingRef = useRef(false);
 
   const onError = useCallback((err: Error) => {
     console.error("talking realtime error", err);
@@ -154,8 +255,8 @@ export function Talking({ onExit }: { onExit: () => void }) {
   const live = phase === "live" && connected;
   const speaking = live && realtime.isPlaying;
   const listening = live && realtime.isCapturing && !realtime.isPlaying;
+  speakingRef.current = speaking;
 
-  // Prefer SDK messages; fall back to our event-built lines if empty.
   const transcriptLines = useMemo(() => {
     const fromMessages: TranscriptLine[] = realtime.messages
       .map((message) => {
@@ -169,10 +270,17 @@ export function Talking({ onExit }: { onExit: () => void }) {
     return fromMessages.length > 0 ? fromMessages : localLines;
   }, [realtime.messages, localLines]);
 
+  // Always pin to the latest line.
   useEffect(() => {
-    if (!showTranscript || !logRef.current) return;
-    logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [transcriptLines, partialAssistant, showTranscript]);
+    if (!showTranscript) return;
+    bottomRef.current?.scrollIntoView({ block: "end" });
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [transcriptLines, partialAssistant, showTranscript, bubble]);
+
+  // Clear translation bubble when Grok starts speaking again.
+  useEffect(() => {
+    if (speaking) setBubble(null);
+  }, [speaking]);
 
   useEffect(() => {
     return () => {
@@ -204,20 +312,28 @@ export function Talking({ onExit }: { onExit: () => void }) {
     micRef.current = null;
     assistantItemRef.current = null;
     setPartialAssistant("");
+    setBubble(null);
     setPhase("idle");
   }, [realtime]);
 
   const start = async () => {
     if (startingRef.current || phase === "live" || realtime.status === "connected") return;
+    if (topicId === CUSTOM_TOPIC_ID && !customText.trim()) {
+      setError("Skriv vad ni ska prata om, eller välj ett ämne.");
+      return;
+    }
+
     startingRef.current = true;
     kickedOffRef.current = false;
     setError(null);
     setPhase("starting");
     setLocalLines([]);
     setPartialAssistant("");
+    setBubble(null);
+
+    const selectedTopic = topic;
 
     try {
-      // Mic first — needs a user gesture, and we want permission before the socket.
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -233,8 +349,13 @@ export function Talking({ onExit }: { onExit: () => void }) {
         throw new Error("Kunde inte ansluta till Grok.");
       }
 
-      // Brief pause so session.update settles before the first response.create.
-      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      // Apply the chosen topic only after the socket is up (keeps sessionConfig stable).
+      realtime.sendEvent({
+        type: "session-update",
+        config: topicConfig(selectedTopic),
+      });
+
+      await new Promise((resolve) => window.setTimeout(resolve, 320));
 
       realtime.startAudioCapture(stream);
 
@@ -258,104 +379,189 @@ export function Talking({ onExit }: { onExit: () => void }) {
     }
   };
 
+  const onWordTap = async (key: string, word: string) => {
+    if (bubble?.key === key) {
+      setBubble(null);
+      return;
+    }
+
+    const normalized = word.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, "");
+    if (!normalized) return;
+
+    const cached = wordCache.get(normalized.toLocaleLowerCase("sv"));
+    if (cached) {
+      setBubble({ key, word: normalized, translation: cached, loading: false });
+      return;
+    }
+
+    setBubble({ key, word: normalized, translation: "", loading: true });
+    try {
+      const response = await fetch("/api/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: normalized }),
+      });
+      const data = (await response.json()) as { translation?: string };
+      const translation = (data.translation || "").trim() || "—";
+      wordCache.set(normalized.toLocaleLowerCase("sv"), translation);
+      setBubble((current) =>
+        current?.key === key ? { key, word: normalized, translation, loading: false } : current,
+      );
+    } catch {
+      setBubble((current) =>
+        current?.key === key
+          ? { key, word: normalized, translation: "Ingen översättning", loading: false }
+          : current,
+      );
+    }
+  };
+
   const statusLabel =
     phase === "starting" || realtime.status === "connecting"
-      ? "Startar samtalet…"
+      ? "Startar…"
       : speaking
-        ? "Grok pratar…"
+        ? "Grok pratar"
         : listening
-          ? "Din tur — prata nu"
+          ? "Din tur"
           : live
-            ? "Samtalet är igång"
-            : "Tryck för att börja";
+            ? "Igång"
+            : "Redo";
+
+  const topicLocked = phase !== "idle";
 
   return (
-    <div className="talk">
+    <div
+      className="talk"
+      onClick={() => {
+        if (bubble) setBubble(null);
+      }}
+    >
       <div className="topbar">
         <button type="button" className="icon-btn icon-btn--plain" onClick={onExit} aria-label="Zurück">
           ‹
         </button>
         <span className="topbar__titles">
-          <h1>
-            {topic.emoji} Prata
-          </h1>
-          <span className="topbar__sub">{topic.title} · Grok Think Fast</span>
+          <h1>Prata</h1>
+          <span className="topbar__sub">
+            {statusLabel}
+            {live ? " · långsamt & tydligt" : " · Grok Think Fast"}
+          </span>
         </span>
         <button
           type="button"
           className={showTranscript ? "talk__toggle talk__toggle--on" : "talk__toggle"}
-          onClick={() => setShowTranscript((value) => !value)}
+          onClick={(event) => {
+            event.stopPropagation();
+            setShowTranscript((value) => !value);
+          }}
           aria-pressed={showTranscript}
         >
           Text {showTranscript ? "på" : "av"}
         </button>
       </div>
 
-      <div className="talk__stage">
-        <div
-          className={[
-            "talk__orb",
-            speaking ? "talk__orb--speaking" : "",
-            listening ? "talk__orb--listening" : "",
-            phase === "starting" || realtime.status === "connecting" ? "talk__orb--pulse" : "",
-            live ? "talk__orb--live" : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-          aria-hidden
-        >
-          <span>{speaking ? "🔊" : listening ? "🎙️" : live ? "●" : "🇸🇪"}</span>
-        </div>
-
-        <div className="talk__status" data-live={live ? "true" : "false"}>
-          {statusLabel}
-        </div>
-        <p className="talk__hint small muted">
-          {live
-            ? "Sprich auf Schwedisch. Grok interviewt dich langsam und deutlich."
-            : "Echtzeit-Gespräch auf Schwedisch — klar, langsam, mit schönem Akzent."}
-        </p>
-
-        <label className="talk__switch">
-          <input
-            type="checkbox"
-            checked={showTranscript}
-            onChange={(event) => setShowTranscript(event.target.checked)}
-          />
-          <span>Visa transkript</span>
+      <div className="talk__toolbar">
+        <label className="talk__select-label">
+          <span className="tiny faint">Ämne</span>
+          <select
+            className="talk__select"
+            value={topicId}
+            disabled={topicLocked}
+            onChange={(event) => setTopicId(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {TALKING_TOPICS.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.emoji} {entry.title} — {entry.titleDe}
+              </option>
+            ))}
+            <option value={CUSTOM_TOPIC_ID}>✏️ Eget ämne — Eigenes Thema</option>
+          </select>
         </label>
 
-        {error ? <div className="talk__error">{error}</div> : null}
-
-        {showTranscript ? (
-          <div className="talk__transcript card" ref={logRef}>
-            <div className="row row--between" style={{ marginBottom: 8 }}>
-              <span className="section-title">Transkript</span>
-              <span className="tiny faint">
-                {transcriptLines.length}
-                {partialAssistant ? "+" : ""} turer
-              </span>
-            </div>
-            {transcriptLines.length === 0 && !partialAssistant ? (
-              <div className="small muted">Här syns vad Grok säger och vad du sagt.</div>
-            ) : (
-              <div className="talk__log">
-                {transcriptLines.map((line) => (
-                  <div
-                    key={`${line.role}-${line.id}`}
-                    className={line.role === "user" ? "bubble bubble--me" : "bubble bubble--them"}
-                  >
-                    {line.text}
-                  </div>
-                ))}
-                {partialAssistant ? <div className="bubble bubble--them">{partialAssistant}</div> : null}
-              </div>
-            )}
-          </div>
+        {topicId === CUSTOM_TOPIC_ID ? (
+          <input
+            className="input talk__custom"
+            value={customText}
+            disabled={topicLocked}
+            onChange={(event) => setCustomText(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+            placeholder="T.ex. hundar, semester, jobbintervju…"
+            maxLength={160}
+          />
         ) : null}
+
+        <div className="talk__tip" onClick={(event) => event.stopPropagation()}>
+          <span className="talk__tip-label">Tips</span>
+          <span>{TALKING_TIP}</span>
+        </div>
       </div>
 
-      <div className="talk__controls">
+      {error ? (
+        <div className="talk__error" style={{ margin: "0 var(--gutter) 8px" }}>
+          {error}
+        </div>
+      ) : null}
+
+      {showTranscript ? (
+        <div
+          className="talk__transcript"
+          ref={logRef}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {transcriptLines.length === 0 && !partialAssistant ? (
+            <div className="talk__empty">
+              <div className="talk__empty-title">{topic.emoji} {topic.title}</div>
+              <div className="small muted">
+                Tryck start — sen syns allt ni säger här. Tryck på ett ord för tysk översättning.
+              </div>
+            </div>
+          ) : (
+            <div className="talk__log">
+              {transcriptLines.map((line) => (
+                <TappableLine
+                  key={`${line.role}-${line.id}`}
+                  text={line.text}
+                  mine={line.role === "user"}
+                  bubble={bubble}
+                  onWordTap={onWordTap}
+                />
+              ))}
+              {partialAssistant ? (
+                <TappableLine
+                  text={partialAssistant}
+                  mine={false}
+                  bubble={bubble}
+                  onWordTap={onWordTap}
+                />
+              ) : null}
+              <div ref={bottomRef} />
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="talk__stage talk__stage--compact">
+          <div
+            className={[
+              "talk__orb",
+              speaking ? "talk__orb--speaking" : "",
+              listening ? "talk__orb--listening" : "",
+              phase === "starting" ? "talk__orb--pulse" : "",
+              live ? "talk__orb--live" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            aria-hidden
+          >
+            <span>{speaking ? "🔊" : listening ? "🎙️" : "🇸🇪"}</span>
+          </div>
+          <div className="talk__status" data-live={live ? "true" : "false"}>
+            {statusLabel}
+          </div>
+        </div>
+      )}
+
+      <div className="talk__controls" onClick={(event) => event.stopPropagation()}>
         {!live ? (
           <button
             type="button"
