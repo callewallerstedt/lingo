@@ -468,7 +468,8 @@ export function Talking({ onExit }: { onExit: () => void }) {
     const x = anchor.left + anchor.width / 2;
     const y = anchor.top;
 
-    const cached = wordCache.get(normalized.toLocaleLowerCase("sv"));
+    const cacheKey = normalized.toLocaleLowerCase("sv");
+    const cached = wordCache.get(cacheKey);
     if (cached) {
       setBubble({ key, word: normalized, translation: cached, loading: false, x, y });
       return;
@@ -479,11 +480,12 @@ export function Talking({ onExit }: { onExit: () => void }) {
       const response = await fetch("/api/translate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: normalized }),
+        // English/German → Swedish; Swedish → German (so she can drop in EN words).
+        body: JSON.stringify({ text: normalized, mode: "talk-word" }),
       });
       const data = (await response.json()) as { translation?: string };
       const translation = (data.translation || "").trim() || "—";
-      wordCache.set(normalized.toLocaleLowerCase("sv"), translation);
+      wordCache.set(cacheKey, translation);
       setBubble((current) =>
         current?.key === key
           ? { key, word: normalized, translation, loading: false, x, y }
@@ -593,7 +595,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
             <div className="talk__empty">
               <div className="talk__empty-title">{topic.emoji} {topic.title}</div>
               <div className="small muted">
-                Tryck start — sen syns allt ni säger här. Tryck på ett ord för tysk översättning.
+                Tryck start — sen syns allt ni säger här. Tryck på svenska ord för tyska, eller engelska ord för svenska.
               </div>
             </div>
           ) : (

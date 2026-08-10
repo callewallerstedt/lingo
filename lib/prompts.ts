@@ -50,6 +50,16 @@ export function scenarioGoalContext(scenario: Scenario): string {
 export const TRANSLATE_SYSTEM =
   "Translate the given Swedish text into natural German. Reply with the translation only — no quotes, no notes, no alternatives.";
 
+/** Word tap in talking mode: English/German → Swedish, Swedish → German. */
+export const TALK_WORD_TRANSLATE_SYSTEM = [
+  "You translate a single word or short phrase for a German speaker learning Swedish.",
+  "Detect the language of the input:",
+  "- If it is English or German, translate it into natural Swedish.",
+  "- If it is Swedish, translate it into natural German.",
+  "- If it is already the same in both (names, numbers), return it unchanged.",
+  "Reply with the translation only — no quotes, no labels, no notes, no alternatives.",
+].join(" ");
+
 export const EXPLAIN_SYSTEM = [
   "You explain Swedish grammar to a German speaker.",
   "Answer in German. Be concise: at most three short sentences plus one Swedish example.",
