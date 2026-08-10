@@ -11,6 +11,7 @@ import { Flashcards } from "@/components/Flashcards";
 import { Vocab } from "@/components/Vocab";
 import { Grammar } from "@/components/Grammar";
 import { Chat } from "@/components/Chat";
+import { Talking } from "@/components/Talking";
 import { Settings } from "@/components/Settings";
 import { NAV_TABS, TAB_TITLES, type Tab } from "@/components/tabs";
 
@@ -34,7 +35,10 @@ function App() {
   // Deep links from the manifest shortcuts and push notifications (/?tab=cards).
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
-    if (requested && ["home", "course", "cards", "vocab", "chat", "grammar", "settings"].includes(requested)) {
+    if (
+      requested &&
+      ["home", "course", "cards", "vocab", "chat", "talk", "grammar", "settings"].includes(requested)
+    ) {
       setTab(requested as Tab);
     }
   }, []);
@@ -77,6 +81,17 @@ function App() {
       <div className="app">
         <div className="screen screen--flush" style={{ height: "100dvh" }}>
           <Chat />
+        </div>
+        <Nav tab={tab} onGo={go} />
+      </div>
+    );
+  }
+
+  if (tab === "talk") {
+    return (
+      <div className="app">
+        <div className="screen screen--flush" style={{ height: "100dvh" }}>
+          <Talking onExit={() => go("home")} />
         </div>
         <Nav tab={tab} onGo={go} />
       </div>

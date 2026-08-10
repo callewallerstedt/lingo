@@ -90,6 +90,19 @@ export function Home({ onGo, onOpenLesson }: { onGo: (tab: Tab) => void; onOpenL
         </div>
       </div>
 
+      <div className="card stack talk-promo">
+        <div className="section-title">Prata svenska</div>
+        <div>
+          <div style={{ fontWeight: 650, fontSize: "1.08rem" }}>Sprechtraining mit Grok</div>
+          <div className="small muted">
+            Echtes Interview auf Schwedisch — klar, langsam, mit schönem Akzent. Text an/aus.
+          </div>
+        </div>
+        <button type="button" className="btn btn--primary btn--lg btn--block" onClick={() => onGo("talk")}>
+          🎙️ Starta samtal
+        </button>
+      </div>
+
       {upNext ? (
         <div className="card stack">
           <div className="section-title">Nächste Lektion</div>
@@ -126,6 +139,14 @@ export function Home({ onGo, onOpenLesson }: { onGo: (tab: Tab) => void; onOpenL
       <div className="stack--sm">
         <div className="section-title">Mehr</div>
         <div className="list">
+          <button type="button" className="list__item" onClick={() => onGo("vocab")}>
+            <span className="list__emoji">📖</span>
+            <span className="list__body">
+              <span className="list__title">Ordlista</span>
+              <span className="list__sub">Alle Wörter durchsuchen</span>
+            </span>
+            <span className="list__chevron">›</span>
+          </button>
           <button type="button" className="list__item" onClick={() => onGo("grammar")}>
             <span className="list__emoji">📘</span>
             <span className="list__body">

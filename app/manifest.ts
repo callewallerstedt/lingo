@@ -19,6 +19,7 @@ export default function manifest(): MetadataRoute.Manifest {
       { src: "/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
     shortcuts: [
+      { name: "Prata", short_name: "Prata", url: "/?tab=talk" },
       { name: "Flashcards", short_name: "Cards", url: "/?tab=cards" },
       { name: "Lektion", short_name: "Lektion", url: "/?tab=course" },
       { name: "AI-chatt", short_name: "Chatt", url: "/?tab=chat" },
