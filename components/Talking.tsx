@@ -24,6 +24,36 @@ type TranscriptLine = {
   text: string;
 };
 
+/** Keep the fullest transcript for an item, and stitch VAD-split user chunks. */
+function upsertUserLine(lines: TranscriptLine[], itemId: string, text: string): TranscriptLine[] {
+  const existingIndex = lines.findIndex((line) => line.id === itemId && line.role === "user");
+  if (existingIndex >= 0) {
+    const existing = lines[existingIndex]!;
+    // xAI "updated" events are cumulative; keep the longer/newer string.
+    if (text.length < existing.text.length && existing.text.startsWith(text)) return lines;
+    const copy = [...lines];
+    copy[existingIndex] = { ...existing, text };
+    return copy;
+  }
+
+  const last = lines[lines.length - 1];
+  if (last?.role === "user") {
+    // Server VAD often commits mid-sentence; glue onto the open user turn.
+    const merged = `${last.text} ${text}`.replace(/\s+/g, " ").trim();
+    return [...lines.slice(0, -1), { ...last, id: itemId || last.id, text: merged }];
+  }
+
+  return [...lines, { id: itemId, role: "user", text }];
+}
+
+function readTranscript(event: { type: string; [key: string]: unknown }): { itemId: string; text: string } | null {
+  const raw = (event.raw && typeof event.raw === "object" ? event.raw : event) as Record<string, unknown>;
+  const text = String(raw.transcript ?? event.transcript ?? "").trim();
+  if (!text) return null;
+  const itemId = String(raw.item_id ?? event.itemId ?? `u-${Date.now()}`);
+  return { itemId, text };
+}
+
 type WordBubble = {
   key: string;
   word: string;
@@ -137,14 +167,18 @@ export function Talking({ onExit }: { onExit: () => void }) {
       voice: TALKING_VOICE,
       turnDetection: {
         type: "server-vad" as const,
-        silenceDurationMs: 1100,
+        silenceDurationMs: 1500,
         threshold: 0.55,
       },
       providerOptions: {
         reasoning: { effort: "none" },
         audio: {
           input: {
-            transcription: {},
+            // grok-transcribe emits cumulative "updated" events — needed for full turns.
+            transcription: {
+              model: "grok-transcribe",
+              language_hint: "sv",
+            },
           },
         },
       },
@@ -158,14 +192,18 @@ export function Talking({ onExit }: { onExit: () => void }) {
       voice: TALKING_VOICE,
       turnDetection: {
         type: "server-vad" as const,
-        silenceDurationMs: 1100,
+        // A bit more patience so mid-sentence pauses don't truncate her turn.
+        silenceDurationMs: 1500,
         threshold: 0.55,
       },
       providerOptions: {
         reasoning: { effort: "none" },
         audio: {
           input: {
-            transcription: {},
+            transcription: {
+              model: "grok-transcribe",
+              language_hint: "sv",
+            },
           },
         },
       },
@@ -232,13 +270,21 @@ export function Talking({ onExit }: { onExit: () => void }) {
     }
 
     if (event.type === "input-transcription-completed") {
-      const text = String(event.transcript ?? "").trim();
-      const itemId = String(event.itemId ?? `u-${Date.now()}`);
-      if (!text) return;
-      setLocalLines((lines) => {
-        if (lines.some((line) => line.id === itemId && line.role === "user")) return lines;
-        return [...lines, { id: itemId, role: "user", text }];
-      });
+      const parsed = readTranscript(event);
+      if (!parsed) return;
+      setLocalLines((lines) => upsertUserLine(lines, parsed.itemId, parsed.text));
+      return;
+    }
+
+    // xAI sends cumulative updates as *.updated (mapped to custom by the SDK).
+    if (
+      event.type === "custom" &&
+      (event.rawType === "conversation.item.input_audio_transcription.updated" ||
+        event.rawType === "conversation.item.input_audio_transcription.delta")
+    ) {
+      const parsed = readTranscript(event);
+      if (!parsed) return;
+      setLocalLines((lines) => upsertUserLine(lines, parsed.itemId, parsed.text));
     }
   }, []);
 
