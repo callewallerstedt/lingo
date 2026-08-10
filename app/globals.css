@@ -1110,6 +1110,16 @@ input[type="range"] {
    Talking / Prata (Grok Voice)
    ============================================================ */
 
+.talk-screen {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  /* Leave room for the fixed bottom nav so controls aren't hidden. */
+  height: auto;
+  padding-bottom: calc(var(--nav-height) + env(safe-area-inset-bottom));
+}
+
 .talk {
   flex: 1;
   display: flex;
@@ -1125,7 +1135,7 @@ input[type="range"] {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 18px var(--gutter) 12px;
+  padding: 12px var(--gutter) 12px;
   text-align: center;
   gap: 12px;
 }
@@ -1163,14 +1173,58 @@ input[type="range"] {
   box-shadow: 0 0 0 10px color-mix(in srgb, var(--good) 16%, transparent), var(--shadow);
 }
 
+.talk__orb--live:not(.talk__orb--speaking):not(.talk__orb--listening) {
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--pink) 14%, transparent), var(--shadow);
+}
+
 .talk__status {
   font-weight: 700;
   font-size: 1.05rem;
 }
 
+.talk__status[data-live="true"] {
+  color: var(--good);
+}
+
 .talk__hint {
   max-width: 28rem;
   margin: 0;
+}
+
+.talk__toggle {
+  flex: none;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.talk__toggle--on {
+  background: var(--pink-wash);
+  color: var(--plum);
+}
+
+.talk__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  font-size: 0.9rem;
+  font-weight: 650;
+  cursor: pointer;
+  user-select: none;
+}
+
+.talk__switch input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--pink);
 }
 
 .talk__error {
@@ -1207,9 +1261,10 @@ input[type="range"] {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px var(--gutter) calc(12px + env(safe-area-inset-bottom));
+  padding: 12px var(--gutter);
   background: var(--surface);
   box-shadow: 0 -1px 0 var(--hairline);
+  flex: none;
 }
 
 .talk-promo {

@@ -90,7 +90,7 @@ function App() {
   if (tab === "talk") {
     return (
       <div className="app">
-        <div className="screen screen--flush" style={{ height: "100dvh" }}>
+        <div className="screen screen--flush talk-screen">
           <Talking onExit={() => go("home")} />
         </div>
         <Nav tab={tab} onGo={go} />

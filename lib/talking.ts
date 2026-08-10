@@ -89,8 +89,8 @@ export function talkingInstructions(topic: TalkingTopic, name = "Tiffy"): string
     "- Never mention that you are an AI, Grok, or a model.",
     "",
     "START:",
-    `- Open immediately: greet ${name} warmly, name the topic briefly, then ${topic.opener}`,
-    "- Do not wait for her to speak first.",
+    `- When asked to respond first, greet ${name} warmly once, name the topic briefly, then ${topic.opener}`,
+    "- Only one greeting. Never restart or repeat the opening if you already greeted her.",
   ].join("\n");
 }
 
