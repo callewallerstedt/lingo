@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { experimental_useRealtime as useRealtime } from "@ai-sdk/react";
 import { xai } from "@ai-sdk/xai";
-import type { UIMessage } from "ai";
 import { useStore } from "@/lib/state";
 import {
   CUSTOM_TOPIC_ID,
@@ -33,13 +32,6 @@ type WordBubble = {
 };
 
 const wordCache = new Map<string, string>();
-
-function messageText(message: UIMessage): string {
-  return message.parts
-    .map((part) => (part.type === "text" ? part.text : ""))
-    .join("")
-    .trim();
-}
 
 function waitFor(
   check: () => boolean,
@@ -108,7 +100,14 @@ function TappableLine({
               {token.value}
             </button>
             {active ? (
-              <span className="talk-word-bubble" role="status">
+              <span
+                className={
+                  !bubble.loading && (bubble.translation?.length ?? 0) > 18
+                    ? "talk-word-bubble talk-word-bubble--wrap"
+                    : "talk-word-bubble"
+                }
+                role="status"
+              >
                 {bubble.loading ? "…" : bubble.translation || "—"}
               </span>
             ) : null}
@@ -153,7 +152,6 @@ export function Talking({ onExit }: { onExit: () => void }) {
       providerOptions: {
         reasoning: { effort: "none" },
         audio: {
-          output: { speed: 0.72 },
           input: {
             transcription: {},
           },
@@ -175,7 +173,6 @@ export function Talking({ onExit }: { onExit: () => void }) {
       providerOptions: {
         reasoning: { effort: "none" },
         audio: {
-          output: { speed: 0.72 },
           input: {
             transcription: {},
           },
@@ -192,7 +189,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
   const logRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const assistantItemRef = useRef<string | null>(null);
-  const speakingRef = useRef(false);
+  const firstResponseDoneRef = useRef(false);
 
   const onError = useCallback((err: Error) => {
     console.error("talking realtime error", err);
@@ -203,6 +200,11 @@ export function Talking({ onExit }: { onExit: () => void }) {
   }, []);
 
   const onEvent = useCallback((event: { type: string; [key: string]: unknown }) => {
+    if (event.type === "response-done") {
+      firstResponseDoneRef.current = true;
+      return;
+    }
+
     if (event.type === "audio-transcript-delta") {
       const itemId = String(event.itemId ?? "assistant");
       const delta = String(event.delta ?? "");
@@ -224,6 +226,14 @@ export function Talking({ onExit }: { onExit: () => void }) {
       if (text) {
         setLocalLines((lines) => {
           if (lines.some((line) => line.id === itemId && line.role === "assistant")) return lines;
+          // Deduplicate near-identical openings if the model glitches once.
+          if (
+            lines.length > 0 &&
+            lines[lines.length - 1]?.role === "assistant" &&
+            lines[lines.length - 1]?.text === text
+          ) {
+            return lines;
+          }
           return [...lines, { id: itemId, role: "assistant", text }];
         });
       }
@@ -255,20 +265,10 @@ export function Talking({ onExit }: { onExit: () => void }) {
   const live = phase === "live" && connected;
   const speaking = live && realtime.isPlaying;
   const listening = live && realtime.isCapturing && !realtime.isPlaying;
-  speakingRef.current = speaking;
 
-  const transcriptLines = useMemo(() => {
-    const fromMessages: TranscriptLine[] = realtime.messages
-      .map((message) => {
-        const text = messageText(message);
-        if (!text) return null;
-        if (message.role !== "user" && message.role !== "assistant") return null;
-        return { id: message.id, role: message.role, text };
-      })
-      .filter((line): line is TranscriptLine => Boolean(line));
-
-    return fromMessages.length > 0 ? fromMessages : localLines;
-  }, [realtime.messages, localLines]);
+  // Prefer our event-built lines only — mixing with SDK messages caused the
+  // opening line to flash twice then disappear.
+  const transcriptLines = localLines;
 
   // Always pin to the latest line.
   useEffect(() => {
@@ -325,6 +325,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
 
     startingRef.current = true;
     kickedOffRef.current = false;
+    firstResponseDoneRef.current = false;
     setError(null);
     setPhase("starting");
     setLocalLines([]);
@@ -355,14 +356,28 @@ export function Talking({ onExit }: { onExit: () => void }) {
         config: topicConfig(selectedTopic),
       });
 
-      await new Promise((resolve) => window.setTimeout(resolve, 320));
+      await new Promise((resolve) => window.setTimeout(resolve, 280));
 
-      realtime.startAudioCapture(stream);
-
+      // Open once with the mic OFF — capturing during the first reply made VAD
+      // hear echo and trigger a second overlapping response.
       if (!kickedOffRef.current) {
         kickedOffRef.current = true;
+        try {
+          realtime.cancelResponse();
+        } catch {
+          // ignore
+        }
         realtime.requestResponse();
       }
+
+      try {
+        await waitFor(() => firstResponseDoneRef.current, { timeoutMs: 20000 });
+      } catch {
+        // If the done event is late, still open the mic so she can talk.
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+      realtime.startAudioCapture(stream);
 
       setPhase("live");
       startingRef.current = false;
@@ -444,7 +459,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
           <h1>Prata</h1>
           <span className="topbar__sub">
             {statusLabel}
-            {live ? " · långsamt & tydligt" : " · Grok Think Fast"}
+            {live ? " · tydlig svenska" : " · Grok Think Fast"}
           </span>
         </span>
         <button
@@ -507,7 +522,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
         <div
           className="talk__transcript"
           ref={logRef}
-          onClick={(event) => event.stopPropagation()}
+          onClick={() => setBubble(null)}
         >
           {transcriptLines.length === 0 && !partialAssistant ? (
             <div className="talk__empty">
