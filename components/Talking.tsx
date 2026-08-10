@@ -216,9 +216,15 @@ export function Talking({ onExit }: { onExit: () => void }) {
   const kickedOffRef = useRef(false);
   const statusRef = useRef("disconnected");
   const logRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
   const assistantItemRef = useRef<string | null>(null);
   const firstResponseDoneRef = useRef(false);
+
+  const scrollTranscriptToBottom = useCallback(() => {
+    const el = logRef.current;
+    if (!el) return;
+    // Instant pin — scrollIntoView was scrolling a parent and jumping up.
+    el.scrollTop = el.scrollHeight;
+  }, []);
 
   const onError = useCallback((err: Error) => {
     console.error("talking realtime error", err);
@@ -307,12 +313,17 @@ export function Talking({ onExit }: { onExit: () => void }) {
   // opening line to flash twice then disappear.
   const transcriptLines = localLines;
 
-  // Always pin to the latest line.
+  // Always pin to the latest line — including mid-stream chunk updates.
   useEffect(() => {
     if (!showTranscript) return;
-    bottomRef.current?.scrollIntoView({ block: "end" });
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [transcriptLines, partialAssistant, showTranscript]);
+    scrollTranscriptToBottom();
+    // After layout/paint once content height settles.
+    const id = window.requestAnimationFrame(() => {
+      scrollTranscriptToBottom();
+      window.requestAnimationFrame(scrollTranscriptToBottom);
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [transcriptLines, partialAssistant, showTranscript, scrollTranscriptToBottom]);
 
   useEffect(() => {
     return () => {
@@ -550,11 +561,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
       ) : null}
 
       {showTranscript ? (
-        <div
-          className="talk__transcript"
-          ref={logRef}
-          onClick={() => setBubble(null)}
-        >
+        <div className="talk__transcript" onClick={() => setBubble(null)}>
           {transcriptLines.length === 0 && !partialAssistant ? (
             <div className="talk__empty">
               <div className="talk__empty-title">{topic.emoji} {topic.title}</div>
@@ -563,7 +570,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
               </div>
             </div>
           ) : (
-            <div className="talk__log">
+            <div className="talk__log" ref={logRef}>
               {transcriptLines.map((line) => (
                 <TappableLine
                   key={`${line.role}-${line.id}`}
@@ -581,7 +588,6 @@ export function Talking({ onExit }: { onExit: () => void }) {
                   onWordTap={onWordTap}
                 />
               ) : null}
-              <div ref={bottomRef} />
             </div>
           )}
         </div>

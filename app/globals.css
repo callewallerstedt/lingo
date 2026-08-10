@@ -1287,6 +1287,7 @@ input[type="range"] {
   display: flex;
   flex-direction: column;
   padding: 0 var(--gutter);
+  overscroll-behavior: contain;
 }
 
 .talk__empty {
@@ -1310,8 +1311,10 @@ input[type="range"] {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: 8px 2px 28px;
 }
 
