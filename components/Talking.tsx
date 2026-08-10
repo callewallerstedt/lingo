@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { experimental_useRealtime as useRealtime } from "@ai-sdk/react";
 import { xai } from "@ai-sdk/xai";
 import { useStore } from "@/lib/state";
@@ -222,7 +222,6 @@ export function Talking({ onExit }: { onExit: () => void }) {
   const scrollTranscriptToBottom = useCallback(() => {
     const el = logRef.current;
     if (!el) return;
-    // Instant pin — scrollIntoView was scrolling a parent and jumping up.
     el.scrollTop = el.scrollHeight;
   }, []);
 
@@ -313,15 +312,15 @@ export function Talking({ onExit }: { onExit: () => void }) {
   // opening line to flash twice then disappear.
   const transcriptLines = localLines;
 
-  // Always pin to the latest line — including mid-stream chunk updates.
-  useEffect(() => {
+  // Pin to the latest line before paint and again after layout settles.
+  useLayoutEffect(() => {
     if (!showTranscript) return;
     scrollTranscriptToBottom();
-    // After layout/paint once content height settles.
-    const id = window.requestAnimationFrame(() => {
-      scrollTranscriptToBottom();
-      window.requestAnimationFrame(scrollTranscriptToBottom);
-    });
+  }, [transcriptLines, partialAssistant, showTranscript, scrollTranscriptToBottom]);
+
+  useEffect(() => {
+    if (!showTranscript) return;
+    const id = window.requestAnimationFrame(scrollTranscriptToBottom);
     return () => window.cancelAnimationFrame(id);
   }, [transcriptLines, partialAssistant, showTranscript, scrollTranscriptToBottom]);
 
@@ -561,7 +560,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
       ) : null}
 
       {showTranscript ? (
-        <div className="talk__transcript" onClick={() => setBubble(null)}>
+        <div className="talk__transcript" ref={logRef} onClick={() => setBubble(null)}>
           {transcriptLines.length === 0 && !partialAssistant ? (
             <div className="talk__empty">
               <div className="talk__empty-title">{topic.emoji} {topic.title}</div>
@@ -570,7 +569,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
               </div>
             </div>
           ) : (
-            <div className="talk__log" ref={logRef}>
+            <div className="talk__log">
               {transcriptLines.map((line) => (
                 <TappableLine
                   key={`${line.role}-${line.id}`}
