@@ -268,19 +268,6 @@ export function Talking({ onExit }: { onExit: () => void }) {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [transcriptLines, partialAssistant, showTranscript]);
 
-  // Clear translation bubble when Grok starts speaking, or the transcript scrolls.
-  useEffect(() => {
-    if (speaking) setBubble(null);
-  }, [speaking]);
-
-  useEffect(() => {
-    const log = logRef.current;
-    if (!log) return;
-    const onScroll = () => setBubble(null);
-    log.addEventListener("scroll", onScroll, { passive: true });
-    return () => log.removeEventListener("scroll", onScroll);
-  }, [showTranscript]);
-
   useEffect(() => {
     return () => {
       try {

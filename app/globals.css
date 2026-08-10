@@ -1172,26 +1172,21 @@ input[type="range"] {
 
 .talk__tip {
   display: flex;
-  gap: 10px;
-  align-items: flex-start;
+  gap: 8px;
+  align-items: baseline;
   text-align: left;
-  padding: 12px 14px;
-  border-radius: var(--radius-sm);
-  background: var(--warn-bg);
-  color: var(--text);
-  font-size: 0.88rem;
-  line-height: 1.45;
+  padding: 2px 2px 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
 }
 
 .talk__tip-label {
   flex: none;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--warn) 18%, #fff);
-  color: var(--warn);
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
+  color: var(--faint);
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 
@@ -1323,8 +1318,8 @@ input[type="range"] {
 .talk__log .bubble {
   max-width: 92%;
   font-size: 1.12rem;
-  line-height: 1.55;
-  padding: 15px 18px;
+  line-height: 1.45;
+  padding: 8px 11px;
 }
 
 .talk-line {
