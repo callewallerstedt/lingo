@@ -1363,26 +1363,27 @@ input[type="range"] {
 }
 
 .talk-word-bubble {
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 10px);
-  transform: translateX(-50%);
-  z-index: 6;
   width: max-content;
-  min-width: max(100%, 3.25rem);
+  min-width: 2.75rem;
   max-width: min(88vw, 260px);
-  padding: 9px 14px;
-  border-radius: 14px;
+  padding: 5px 8px;
+  border-radius: 12px;
   background: var(--plum);
   color: #fff;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.2;
   letter-spacing: 0.01em;
   text-align: center;
-  box-shadow: var(--shadow);
-  pointer-events: none;
+  box-shadow: var(--shadow-lg);
   white-space: nowrap;
+}
+
+.talk-word-bubble--fixed {
+  position: fixed;
+  z-index: 80;
+  transform: translate(-50%, calc(-100% - 10px));
+  pointer-events: none;
 }
 
 .talk-word-bubble--wrap {
@@ -1390,13 +1391,13 @@ input[type="range"] {
   text-wrap: balance;
 }
 
-.talk-word-bubble::after {
+.talk-word-bubble--fixed::after {
   content: "";
   position: absolute;
   left: 50%;
   top: 100%;
   transform: translateX(-50%);
-  border: 7px solid transparent;
+  border: 6px solid transparent;
   border-top-color: var(--plum);
 }
 

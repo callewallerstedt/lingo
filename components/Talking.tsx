@@ -29,6 +29,9 @@ type WordBubble = {
   word: string;
   translation: string;
   loading: boolean;
+  /** Viewport anchor for a fixed overlay so it isn't clipped by tips/scroll. */
+  x: number;
+  y: number;
 };
 
 const wordCache = new Map<string, string>();
@@ -67,13 +70,13 @@ function tokenize(text: string): Array<{ type: "word" | "gap"; value: string }> 
 function TappableLine({
   text,
   mine,
-  bubble,
+  activeKey,
   onWordTap,
 }: {
   text: string;
   mine: boolean;
-  bubble: WordBubble | null;
-  onWordTap: (key: string, word: string) => void;
+  activeKey: string | null;
+  onWordTap: (key: string, word: string, anchor: DOMRect) => void;
 }) {
   const tokens = useMemo(() => tokenize(text), [text]);
 
@@ -85,33 +88,21 @@ function TappableLine({
         }
 
         const key = `${token.value.toLocaleLowerCase("sv")}-${index}-${text.slice(0, 12)}`;
-        const active = bubble?.key === key;
+        const active = activeKey === key;
 
         return (
-          <span key={key} className="talk-word-wrap">
-            <button
-              type="button"
-              className={active ? "talk-word talk-word--on" : "talk-word"}
-              onClick={(event) => {
-                event.stopPropagation();
-                onWordTap(key, token.value);
-              }}
-            >
-              {token.value}
-            </button>
-            {active ? (
-              <span
-                className={
-                  !bubble.loading && (bubble.translation?.length ?? 0) > 18
-                    ? "talk-word-bubble talk-word-bubble--wrap"
-                    : "talk-word-bubble"
-                }
-                role="status"
-              >
-                {bubble.loading ? "…" : bubble.translation || "—"}
-              </span>
-            ) : null}
-          </span>
+          <button
+            key={key}
+            type="button"
+            className={active ? "talk-word talk-word--on" : "talk-word"}
+            onClick={(event) => {
+              event.stopPropagation();
+              const rect = event.currentTarget.getBoundingClientRect();
+              onWordTap(key, token.value, rect);
+            }}
+          >
+            {token.value}
+          </button>
         );
       })}
     </div>
@@ -275,12 +266,20 @@ export function Talking({ onExit }: { onExit: () => void }) {
     if (!showTranscript) return;
     bottomRef.current?.scrollIntoView({ block: "end" });
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [transcriptLines, partialAssistant, showTranscript, bubble]);
+  }, [transcriptLines, partialAssistant, showTranscript]);
 
-  // Clear translation bubble when Grok starts speaking again.
+  // Clear translation bubble when Grok starts speaking, or the transcript scrolls.
   useEffect(() => {
     if (speaking) setBubble(null);
   }, [speaking]);
+
+  useEffect(() => {
+    const log = logRef.current;
+    if (!log) return;
+    const onScroll = () => setBubble(null);
+    log.addEventListener("scroll", onScroll, { passive: true });
+    return () => log.removeEventListener("scroll", onScroll);
+  }, [showTranscript]);
 
   useEffect(() => {
     return () => {
@@ -301,7 +300,6 @@ export function Talking({ onExit }: { onExit: () => void }) {
     startingRef.current = false;
     kickedOffRef.current = false;
     try {
-      realtime.cancelResponse();
       realtime.stopAudioCapture();
       realtime.stopPlayback();
       realtime.disconnect();
@@ -362,11 +360,6 @@ export function Talking({ onExit }: { onExit: () => void }) {
       // hear echo and trigger a second overlapping response.
       if (!kickedOffRef.current) {
         kickedOffRef.current = true;
-        try {
-          realtime.cancelResponse();
-        } catch {
-          // ignore
-        }
         realtime.requestResponse();
       }
 
@@ -394,7 +387,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
     }
   };
 
-  const onWordTap = async (key: string, word: string) => {
+  const onWordTap = async (key: string, word: string, anchor: DOMRect) => {
     if (bubble?.key === key) {
       setBubble(null);
       return;
@@ -403,13 +396,16 @@ export function Talking({ onExit }: { onExit: () => void }) {
     const normalized = word.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, "");
     if (!normalized) return;
 
+    const x = anchor.left + anchor.width / 2;
+    const y = anchor.top;
+
     const cached = wordCache.get(normalized.toLocaleLowerCase("sv"));
     if (cached) {
-      setBubble({ key, word: normalized, translation: cached, loading: false });
+      setBubble({ key, word: normalized, translation: cached, loading: false, x, y });
       return;
     }
 
-    setBubble({ key, word: normalized, translation: "", loading: true });
+    setBubble({ key, word: normalized, translation: "", loading: true, x, y });
     try {
       const response = await fetch("/api/translate", {
         method: "POST",
@@ -420,12 +416,14 @@ export function Talking({ onExit }: { onExit: () => void }) {
       const translation = (data.translation || "").trim() || "—";
       wordCache.set(normalized.toLocaleLowerCase("sv"), translation);
       setBubble((current) =>
-        current?.key === key ? { key, word: normalized, translation, loading: false } : current,
+        current?.key === key
+          ? { key, word: normalized, translation, loading: false, x, y }
+          : current,
       );
     } catch {
       setBubble((current) =>
         current?.key === key
-          ? { key, word: normalized, translation: "Ingen översättning", loading: false }
+          ? { key, word: normalized, translation: "Ingen översättning", loading: false, x, y }
           : current,
       );
     }
@@ -538,7 +536,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
                   key={`${line.role}-${line.id}`}
                   text={line.text}
                   mine={line.role === "user"}
-                  bubble={bubble}
+                  activeKey={bubble?.key ?? null}
                   onWordTap={onWordTap}
                 />
               ))}
@@ -546,7 +544,7 @@ export function Talking({ onExit }: { onExit: () => void }) {
                 <TappableLine
                   text={partialAssistant}
                   mine={false}
-                  bubble={bubble}
+                  activeKey={bubble?.key ?? null}
                   onWordTap={onWordTap}
                 />
               ) : null}
@@ -592,6 +590,21 @@ export function Talking({ onExit }: { onExit: () => void }) {
           </button>
         )}
       </div>
+
+      {bubble ? (
+        <div
+          className={
+            !bubble.loading && bubble.translation.length > 18
+              ? "talk-word-bubble talk-word-bubble--fixed talk-word-bubble--wrap"
+              : "talk-word-bubble talk-word-bubble--fixed"
+          }
+          style={{ left: bubble.x, top: bubble.y }}
+          role="status"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {bubble.loading ? "…" : bubble.translation || "—"}
+        </div>
+      ) : null}
     </div>
   );
 }

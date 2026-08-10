@@ -288,8 +288,9 @@ export function talkingInstructions(topic: TalkingTopic, name = "Tiffy"): string
     "- Only if she is still stuck, give a tiny German hint for the key words, then continue in Swedish.",
     "",
     "START:",
-    `- First turn only: a tiny hello (optional) + ${topic.opener}`,
-    "- Do not list themes. Do not explain what you will talk about. One question only.",
+    `- First turn only: always begin with "Hej ${name}." then ${topic.opener}`,
+    "- Keep that opening short: greeting + one question. Nothing else.",
+    "- Do not list themes. Do not explain what you will talk about.",
     "- Never repeat or restart the opening.",
   ].join("\n");
 }
